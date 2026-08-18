@@ -177,6 +177,27 @@ def require_exam_owner(exam_id: str, teacher_id: str) -> None:
         raise HTTPException(404, "Exam not found")
 
 
+def require_submission_owner(submission_id: str, teacher_id: str) -> None:
+    with connection() as con:
+        submission = con.execute("SELECT e.teacher_id FROM submissions s JOIN exams e ON e.id=s.exam_id WHERE s.id=?", (submission_id,)).fetchone()
+    if not submission or submission["teacher_id"] != teacher_id:
+        raise HTTPException(404, "Submission not found")
+
+
+def require_evaluation_owner(evaluation_id: str, teacher_id: str) -> None:
+    with connection() as con:
+        evaluation = con.execute("""SELECT e.teacher_id FROM evaluations ev JOIN submissions s ON s.id=ev.submission_id JOIN exams e ON e.id=s.exam_id WHERE ev.id=?""", (evaluation_id,)).fetchone()
+    if not evaluation or evaluation["teacher_id"] != teacher_id:
+        raise HTTPException(404, "Evaluation not found")
+
+
+def require_review_owner(review_id: str, teacher_id: str) -> None:
+    with connection() as con:
+        review = con.execute("""SELECT e.teacher_id FROM reviews r JOIN evaluations ev ON ev.id=r.evaluation_id JOIN submissions s ON s.id=ev.submission_id JOIN exams e ON e.id=s.exam_id WHERE r.id=?""", (review_id,)).fetchone()
+    if not review or review["teacher_id"] != teacher_id:
+        raise HTTPException(404, "Review not found")
+
+
 def exam_detail(exam_id: str) -> dict:
     with connection() as con:
         exam = con.execute("SELECT * FROM exams WHERE id=?", (exam_id,)).fetchone()
@@ -406,7 +427,8 @@ async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, stu
 
 
 @app.post("/api/submissions/{submission_id}/process")
-async def start_processing(submission_id: str, background_tasks: BackgroundTasks):
+async def start_processing(submission_id: str, background_tasks: BackgroundTasks, teacher: dict = Depends(current_teacher)):
+    require_submission_owner(submission_id, teacher["id"])
     with connection() as con:
         submission = con.execute("SELECT status FROM submissions WHERE id=?", (submission_id,)).fetchone()
     if not submission:
@@ -418,7 +440,8 @@ async def start_processing(submission_id: str, background_tasks: BackgroundTasks
 
 
 @app.post("/api/submissions/{submission_id}/retry")
-async def retry_processing(submission_id: str, background_tasks: BackgroundTasks):
+async def retry_processing(submission_id: str, background_tasks: BackgroundTasks, teacher: dict = Depends(current_teacher)):
+    require_submission_owner(submission_id, teacher["id"])
     with connection() as con:
         submission = con.execute("SELECT status FROM submissions WHERE id=?", (submission_id,)).fetchone()
     if not submission:
@@ -430,7 +453,8 @@ async def retry_processing(submission_id: str, background_tasks: BackgroundTasks
 
 
 @app.get("/api/submissions/{submission_id}/status")
-def processing_status(submission_id: str):
+def processing_status(submission_id: str, teacher: dict = Depends(current_teacher)):
+    require_submission_owner(submission_id, teacher["id"])
     with connection() as con:
         job = con.execute("SELECT stage, attempts, error, updated_at FROM processing_jobs WHERE submission_id=?", (submission_id,)).fetchone()
     if not job:
@@ -439,7 +463,8 @@ def processing_status(submission_id: str):
 
 
 @app.get("/api/submissions/{submission_id}")
-def get_submission(submission_id: str):
+def get_submission(submission_id: str, teacher: dict = Depends(current_teacher)):
+    require_submission_owner(submission_id, teacher["id"])
     with connection() as con:
         submission = con.execute("""SELECT s.*, st.name student_name, e.title exam_title, e.id exam_id FROM submissions s JOIN students st ON st.id=s.student_id JOIN exams e ON e.id=s.exam_id WHERE s.id=?""", (submission_id,)).fetchone()
         if not submission:
@@ -467,7 +492,8 @@ def get_page(page_id: str):
 
 
 @app.post("/api/evaluations/{evaluation_id}/review")
-async def request_review(evaluation_id: str, payload: ReviewInput):
+async def request_review(evaluation_id: str, payload: ReviewInput, teacher: dict = Depends(current_teacher)):
+    require_evaluation_owner(evaluation_id, teacher["id"])
     if not settings.openai_enabled:
         raise HTTPException(503, "OPENAI_API_KEY is required for criterion re-evaluation.")
     with connection() as con:
@@ -483,7 +509,8 @@ async def request_review(evaluation_id: str, payload: ReviewInput):
 
 
 @app.post("/api/reviews/{review_id}/{decision}")
-def decide_review(review_id: str, decision: Literal["accept", "reject"]):
+def decide_review(review_id: str, decision: Literal["accept", "reject"], teacher: dict = Depends(current_teacher)):
+    require_review_owner(review_id, teacher["id"])
     with connection() as con:
         review = con.execute("SELECT * FROM reviews WHERE id=?", (review_id,)).fetchone()
         if not review or review["status"] != "pending":
@@ -500,7 +527,8 @@ def decide_review(review_id: str, decision: Literal["accept", "reject"]):
 
 
 @app.patch("/api/evaluations/{evaluation_id}")
-def override(evaluation_id: str, payload: OverrideInput):
+def override(evaluation_id: str, payload: OverrideInput, teacher: dict = Depends(current_teacher)):
+    require_evaluation_owner(evaluation_id, teacher["id"])
     with connection() as con:
         row = con.execute("""SELECT ev.*, c.max_marks FROM evaluations ev JOIN criteria c ON c.id=ev.criterion_id WHERE ev.id=?""", (evaluation_id,)).fetchone()
         if not row:
@@ -516,7 +544,8 @@ def override(evaluation_id: str, payload: OverrideInput):
 
 
 @app.get("/api/evaluations/{evaluation_id}/history")
-def evaluation_history(evaluation_id: str):
+def evaluation_history(evaluation_id: str, teacher: dict = Depends(current_teacher)):
+    require_evaluation_owner(evaluation_id, teacher["id"])
     with connection() as con:
         evaluation = con.execute("SELECT id FROM evaluations WHERE id=?", (evaluation_id,)).fetchone()
         if not evaluation:

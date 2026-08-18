@@ -54,7 +54,12 @@ def test_pdf_upload_creates_a_normalized_record_for_every_page(tmp_path, monkeyp
     assert job["attempts"] == 0
 
 
-def test_process_endpoint_rejects_unknown_submission():
+def test_process_endpoint_rejects_unknown_submission(tmp_path, monkeypatch):
+    import app.main as main
+    monkeypatch.setattr(main, "DB", tmp_path / "test.db")
+    monkeypatch.setattr(main, "DATA", tmp_path)
+    monkeypatch.setattr(main, "UPLOADS", tmp_path / "uploads")
+    init_db()
     with pytest.raises(HTTPException) as error:
-        asyncio.run(start_processing("missing", BackgroundTasks()))
+        asyncio.run(start_processing("missing", BackgroundTasks(), teacher={"id": None}))
     assert error.value.status_code == 404
