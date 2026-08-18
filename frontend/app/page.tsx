@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
 
@@ -43,7 +44,7 @@ export default function Home() {
     <header className="border-b border-[#172126]/10 bg-[#fcfaf5] px-5 py-4 sm:px-8">
       <div className="mx-auto flex max-w-7xl items-center justify-between">
         <div><span className="font-serif text-2xl font-bold tracking-tight">PRISM</span><span className="ml-3 hidden border-l border-[#172126]/15 pl-3 text-sm text-[#566164] sm:inline">Assessment intelligence</span></div>
-        <button type="button" className="rounded-md bg-[#173f4c] px-3 py-2 text-sm font-medium text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#173f4c]">Create exam</button>
+        <Link href="/exams/new" className="rounded-md bg-[#173f4c] px-3 py-2 text-sm font-medium text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#173f4c]">Create exam</Link>
       </div>
     </header>
     <div className="mx-auto grid max-w-7xl lg:grid-cols-[210px_1fr]">
