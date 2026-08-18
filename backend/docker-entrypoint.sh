@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-if [ "${APP_ENV:-development}" = "production" ]; then
-  alembic upgrade head
-fi
+# Schema migrations must run before the API imports routes that query new tables.
+# Dokploy's environment can be temporarily set to development during provisioning.
+alembic upgrade head
 
 exec "$@"
