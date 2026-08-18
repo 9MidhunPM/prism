@@ -7,7 +7,10 @@ COPY alembic.ini .
 COPY alembic ./alembic
 COPY app ./app
 COPY docker-entrypoint.sh /usr/local/bin/prism-api
-RUN chmod 755 /usr/local/bin/prism-api && useradd --create-home --uid 10001 prism
+RUN useradd --create-home --uid 10001 prism \
+    && mkdir -p /app/data \
+    && chown -R prism:prism /app \
+    && chmod 755 /usr/local/bin/prism-api
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 80
