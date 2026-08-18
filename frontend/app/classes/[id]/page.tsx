@@ -10,6 +10,7 @@ type Student = {
   name: string;
   identifier: string;
   profile?: { concepts: { concept: string; mastery: number }[] };
+  account?: { email: string; disabled: boolean } | null;
 };
 type ClassData = {
   id: string;
@@ -40,6 +41,9 @@ export default function ClassPage({
   const [existingStudents, setExistingStudents] = useState<
     { id: string; name: string; identifier: string; class_name: string }[]
   >([]);
+  const [accountStudent, setAccountStudent] = useState<Student | null>(null);
+  const [accountEmail, setAccountEmail] = useState("");
+  const [temporaryPassword, setTemporaryPassword] = useState("");
   const load = async (id: string) => {
     const [nextData, nextAnalytics] = await Promise.all([
       api.get<ClassData>(`/api/classes/${id}`),
@@ -136,6 +140,22 @@ export default function ClassPage({
       );
     }
   }
+  async function provisionAccount(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!data || !accountStudent) return;
+    try {
+      await api.put(`/api/students/${accountStudent.id}/account`, {
+        email: accountEmail,
+        temporary_password: temporaryPassword,
+      });
+      setAccountStudent(null);
+      setAccountEmail("");
+      setTemporaryPassword("");
+      await load(data.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The student account could not be provisioned.");
+    }
+  }
   if (!data)
     return (
       <AppShell>
@@ -202,16 +222,18 @@ export default function ClassPage({
             </form>
             <div className="mt-5 divide-y divide-[var(--line)]">
               {data.students.map((student) => (
-                <Link
+                <div
                   key={student.id}
-                  href={`/students/${student.id}`}
-                  className="flex items-center justify-between py-3 text-sm hover:text-[var(--brand)]"
+                  className="flex items-center justify-between gap-3 py-3 text-sm"
                 >
-                  <span className="font-semibold">{student.name}</span>
-                  <span className="font-mono text-xs text-[var(--ink-muted)]">
-                    {student.identifier}
-                  </span>
-                </Link>
+                  <Link href={`/students/${student.id}`} className="min-w-0 hover:text-[var(--brand)]">
+                    <span className="block font-semibold">{student.name}</span>
+                    <span className="font-mono text-xs text-[var(--ink-muted)]">{student.identifier}</span>
+                  </Link>
+                  <button type="button" className="button-quiet shrink-0" onClick={() => { setAccountStudent(student); setAccountEmail(student.account?.email ?? ""); }}>
+                    {student.account ? "Reset access" : "Create access"}
+                  </button>
+                </div>
               ))}
             </div>
           </section>
@@ -262,6 +284,20 @@ export default function ClassPage({
             </div>
           </section>
         </div>
+        {accountStudent && (
+          <section className="surface mt-7 max-w-2xl p-6">
+            <h2 className="font-serif text-2xl font-semibold">Student access</h2>
+            <p className="mt-2 text-sm text-[var(--ink-muted)]">Set a temporary password for {accountStudent.name}. They will be asked to change it after sign-in.</p>
+            <form onSubmit={provisionAccount} className="mt-5 grid gap-3 sm:grid-cols-2">
+              <input className="input" type="email" required value={accountEmail} onChange={(event) => setAccountEmail(event.target.value)} placeholder="Student email" />
+              <input className="input" type="password" required minLength={12} value={temporaryPassword} onChange={(event) => setTemporaryPassword(event.target.value)} placeholder="Temporary password" />
+              <div className="flex gap-2 sm:col-span-2">
+                <button className="button-primary" type="submit">Save access</button>
+                <button className="button-quiet" type="button" onClick={() => setAccountStudent(null)}>Cancel</button>
+              </div>
+            </form>
+          </section>
+        )}
         <section className="mt-7">
           <h2 className="font-serif text-2xl font-semibold">
             Class performance

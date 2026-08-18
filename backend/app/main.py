@@ -214,6 +214,20 @@ class TeacherCredentials(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=120)
 
 
+class StudentAccountInput(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    temporary_password: str = Field(min_length=12, max_length=256)
+
+
+class PasswordChangeInput(BaseModel):
+    current_password: str = Field(min_length=12, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)
+
+
+class ReleaseInput(BaseModel):
+    released: bool
+
+
 def imported_draft(result) -> dict:
     warnings = list(result.warnings)
     clarifications = []
@@ -244,9 +258,9 @@ def current_account(session_token: str | None = Cookie(default=None, alias="pris
     with session() as db:
         active_session = db.scalar(select(AuthSession).where(AuthSession.token_hash == token_hash(session_token), AuthSession.revoked_at.is_(None), AuthSession.expires_at > datetime.now(timezone.utc)))
         account = db.get(Account, active_session.account_id) if active_session else None
-        if not account:
+        if not account or account.disabled_at:
             raise HTTPException(401, "Sign in to continue.")
-        return {"id": account.id, "role": account.role.value, "teacher_id": account.teacher_id, "student_id": account.student_id, "email": account.email}
+        return {"id": account.id, "role": account.role.value, "teacher_id": account.teacher_id, "student_id": account.student_id, "email": account.email, "must_change_password": account.must_change_password}
 
 
 def current_teacher(account: dict = Depends(current_account)) -> dict:
@@ -264,9 +278,9 @@ def current_student(account: dict = Depends(current_account)) -> dict:
         raise HTTPException(403, "Student access is required.")
     with session() as db:
         student = db.get(Student, account["student_id"])
-        if not student:
+        if not student or student.archived_at:
             raise HTTPException(401, "Sign in to continue.")
-        return {"id": student.id, "account_id": account["id"], "name": student.name, "email": account["email"], "role": AccountRole.STUDENT.value}
+        return {"id": student.id, "account_id": account["id"], "name": student.name, "email": account["email"], "role": AccountRole.STUDENT.value, "must_change_password": account["must_change_password"]}
 
 
 def set_session(response: Response, account: Account) -> None:
@@ -400,6 +414,7 @@ def submission_summary(submission: Submission, student: Student, exam: Exam) -> 
         "student_name": student.name,
         "exam_title": exam.title,
         "class_id": exam.class_id,
+        "released_at": submission.released_at,
     }
 
 
@@ -430,6 +445,8 @@ def clear_submission_results(db, submission_id: str) -> None:
     if submission:
         submission.total_score = 0
         submission.mapping_review_required = False
+        submission.released_at = None
+        submission.released_by_teacher_id = None
 
 
 def normalized_question_number(value: str | None) -> str:
@@ -690,13 +707,13 @@ def bootstrap_teacher(payload: TeacherCredentials, response: Response, bootstrap
 def login(payload: TeacherCredentials, response: Response):
     with session() as db:
         account = db.scalar(select(Account).where(Account.email == payload.email.strip().lower()))
-        if not account or not verify_password(payload.password, account.password_hash): raise HTTPException(401, "Invalid email or password.")
+        if not account or account.disabled_at or not verify_password(payload.password, account.password_hash): raise HTTPException(401, "Invalid email or password.")
         if account.role == AccountRole.TEACHER:
             identity = db.get(Teacher, account.teacher_id)
         else:
             identity = db.get(Student, account.student_id)
         if not identity: raise HTTPException(401, "Invalid account.")
-        result = {"id": identity.id, "name": identity.name, "email": account.email, "role": account.role.value}
+        result = {"id": identity.id, "name": identity.name, "email": account.email, "role": account.role.value, "must_change_password": account.must_change_password}
     set_session(response, account); return result
 
 
@@ -787,7 +804,8 @@ def get_class(class_id: str, teacher: dict = Depends(current_teacher)):
         member_students = db.scalars(select(Student).join(ClassMembership).where(ClassMembership.class_id == cohort.id, Student.archived_at.is_(None))).all()
         students = sorted({student.id: student for student in [*primary_students, *member_students]}.values(), key=lambda student: student.name)
         exams = db.scalars(select(Exam).where(Exam.class_id == cohort.id, Exam.archived_at.is_(None)).order_by(Exam.created_at.desc())).all()
-        return {"id": cohort.id, "name": cohort.name, "archived_at": cohort.archived_at, "students": [{"id": student.id, "name": student.name, "identifier": student.identifier} for student in students], "exams": [{"id": exam.id, "title": exam.title, "subject": exam.subject, "total_marks": exam.total_marks} for exam in exams]}
+        accounts = {account.student_id: account for account in db.scalars(select(Account).where(Account.student_id.in_([student.id for student in students] or ["-"]))).all()}
+        return {"id": cohort.id, "name": cohort.name, "archived_at": cohort.archived_at, "students": [{"id": student.id, "name": student.name, "identifier": student.identifier, "account": {"email": accounts[student.id].email, "disabled": bool(accounts[student.id].disabled_at)} if student.id in accounts else None} for student in students], "exams": [{"id": exam.id, "title": exam.title, "subject": exam.subject, "total_marks": exam.total_marks} for exam in exams]}
 
 
 @app.patch("/api/classes/{class_id}")
@@ -843,7 +861,59 @@ def get_students(q: str = "", teacher: dict = Depends(current_teacher)):
         if q.strip():
             like = f"%{q.strip()}%"
             statement = statement.where((Student.name.ilike(like)) | (Student.identifier.ilike(like)))
-        return [{"id": student.id, "name": student.name, "identifier": student.identifier, "class_id": cohort.id, "class_name": cohort.name} for student, cohort in db.execute(statement.order_by(Student.name).limit(20)).all()]
+        rows = db.execute(statement.order_by(Student.name).limit(20)).all()
+        accounts = {account.student_id: account for account in db.scalars(select(Account).where(Account.student_id.in_([student.id for student, _ in rows] or ["-"]))).all()}
+        return [{"id": student.id, "name": student.name, "identifier": student.identifier, "class_id": cohort.id, "class_name": cohort.name, "account": {"email": accounts[student.id].email, "disabled": bool(accounts[student.id].disabled_at)} if student.id in accounts else None} for student, cohort in rows]
+
+
+@app.put("/api/students/{student_id}/account")
+def provision_student_account(student_id: str, payload: StudentAccountInput, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        student = db.scalar(select(Student).join(ClassCohort).where(Student.id == student_id, ClassCohort.teacher_id == teacher["id"], Student.archived_at.is_(None)))
+        if not student:
+            raise HTTPException(404, "Student not found")
+        email = payload.email.strip().lower()
+        account = db.scalar(select(Account).where(Account.student_id == student.id))
+        existing = db.scalar(select(Account).where(Account.email == email, Account.id != (account.id if account else "")))
+        if existing:
+            raise HTTPException(409, "That email is already in use.")
+        if not account:
+            account = Account(email=email, password_hash=hash_password(payload.temporary_password), role=AccountRole.STUDENT, student_id=student.id, must_change_password=True)
+            db.add(account)
+        else:
+            account.email = email
+            account.password_hash = hash_password(payload.temporary_password)
+            account.disabled_at = None
+            account.must_change_password = True
+            for auth_session in db.scalars(select(AuthSession).where(AuthSession.account_id == account.id, AuthSession.revoked_at.is_(None))):
+                auth_session.revoked_at = datetime.now(timezone.utc)
+        db.commit()
+        return {"student_id": student.id, "email": account.email, "must_change_password": True}
+
+
+@app.patch("/api/students/{student_id}/account")
+def set_student_account_status(student_id: str, disabled: bool, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        account = db.scalar(select(Account).join(Student).join(ClassCohort).where(Account.student_id == student_id, ClassCohort.teacher_id == teacher["id"]))
+        if not account:
+            raise HTTPException(404, "Student account not found")
+        account.disabled_at = datetime.now(timezone.utc) if disabled else None
+        if disabled:
+            for auth_session in db.scalars(select(AuthSession).where(AuthSession.account_id == account.id, AuthSession.revoked_at.is_(None))):
+                auth_session.revoked_at = datetime.now(timezone.utc)
+        db.commit()
+        return {"student_id": student_id, "disabled": disabled}
+
+
+@app.post("/api/auth/change-password", status_code=204)
+def change_password(payload: PasswordChangeInput, account: dict = Depends(current_account)):
+    with session() as db:
+        persisted = db.get(Account, account["id"])
+        if not persisted or not verify_password(payload.current_password, persisted.password_hash):
+            raise HTTPException(401, "Current password is incorrect.")
+        persisted.password_hash = hash_password(payload.new_password)
+        persisted.must_change_password = False
+        db.commit()
 
 
 @app.post("/api/classes/{class_id}/memberships", status_code=201)
@@ -1104,7 +1174,19 @@ def get_submission(submission_id: str, teacher: dict = Depends(current_teacher))
         for ev, criterion, question in db.execute(select(CriterionEvaluation, RubricCriterion, Question).select_from(CriterionEvaluation).join(RubricCriterion, CriterionEvaluation.criterion_id == RubricCriterion.id).join(Question, RubricCriterion.question_id == Question.id).join(Answer, CriterionEvaluation.answer_id == Answer.id).where(Answer.submission_id == submission_id).order_by(Question.number)):
             pending = db.scalar(select(ReviewSuggestion).where(ReviewSuggestion.evaluation_id == ev.id, ReviewSuggestion.status == "pending").order_by(ReviewSuggestion.created_at.desc()))
             evaluations.append({"id": ev.id, "ai_marks": ev.ai_marks, "teacher_marks": ev.teacher_marks, "reason": ev.reason, "confidence": ev.confidence, "needs_review": ev.needs_review, "review_severity": ev.review_severity, "review_resolved": ev.review_resolved, "review_resolution": ev.review_resolution, "criterion_title": criterion.title, "criterion_description": criterion.description, "max_marks": criterion.max_marks, "concept": criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized", "question_id": question.id, "question_number": question.number, "question_text": question.text, "evidence": [{"page_id": evidence.page_id, "page": p.page_number if (p := db.get(SubmissionPage, evidence.page_id)) else None, "quote": evidence.quote} for evidence in db.scalars(select(EvaluationEvidence).where(EvaluationEvidence.evaluation_id == ev.id))], "pending_review": {"id": pending.id, "suggested_marks": pending.suggested_marks, "reason": pending.reason, "confidence": pending.confidence} if pending else None, "effective_marks": ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks})
-        return {"id": submission.id, "exam_id": submission.exam_id, "student_id": submission.student_id, "status": submission.status.value, "total_score": submission.total_score, "created_at": submission.created_at, "error": submission.error, "student_name": student.name, "exam_title": exam.title, "pages": pages, "answers": answers, "evaluations": evaluations}
+        return {"id": submission.id, "exam_id": submission.exam_id, "student_id": submission.student_id, "status": submission.status.value, "total_score": submission.total_score, "created_at": submission.created_at, "error": submission.error, "student_name": student.name, "exam_title": exam.title, "released_at": submission.released_at, "pages": pages, "answers": answers, "evaluations": evaluations}
+
+
+@app.patch("/api/submissions/{submission_id}/release")
+def release_submission(submission_id: str, payload: ReleaseInput, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        submission = active_owned_submission(db, submission_id, teacher["id"])
+        if payload.released and submission.status not in {SubmissionStatus.COMPLETED, SubmissionStatus.REVIEW_REQUIRED}:
+            raise HTTPException(409, "Finish processing this paper before releasing it.")
+        submission.released_at = datetime.now(timezone.utc) if payload.released else None
+        submission.released_by_teacher_id = teacher["id"] if payload.released else None
+        db.commit()
+        return {"id": submission.id, "released": payload.released, "released_at": submission.released_at}
 
 
 def student_result(db, submission: Submission) -> dict:
@@ -1112,22 +1194,36 @@ def student_result(db, submission: Submission) -> dict:
     evaluations = []
     for ev, criterion, question in db.execute(select(CriterionEvaluation, RubricCriterion, Question).select_from(CriterionEvaluation).join(RubricCriterion, CriterionEvaluation.criterion_id == RubricCriterion.id).join(Question, RubricCriterion.question_id == Question.id).join(Answer, CriterionEvaluation.answer_id == Answer.id).where(Answer.submission_id == submission.id).order_by(Question.number)):
         evaluations.append({"id": ev.id, "question_number": question.number, "criterion_title": criterion.title, "max_marks": criterion.max_marks, "marks": ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks, "reason": ev.reason, "confidence": ev.confidence, "needs_review": ev.needs_review, "review_severity": ev.review_severity, "review_resolved": ev.review_resolved, "evidence": [{"page": page.page_number if (page := db.get(SubmissionPage, evidence.page_id)) else None, "quote": evidence.quote} for evidence in db.scalars(select(EvaluationEvidence).where(EvaluationEvidence.evaluation_id == ev.id))]})
-    return {"id": submission.id, "exam_id": submission.exam_id, "exam_title": exam.title, "subject": exam.subject, "status": submission.status.value, "total_score": submission.total_score, "created_at": submission.created_at, "evaluations": evaluations}
+    return {"id": submission.id, "exam_id": submission.exam_id, "exam_title": exam.title, "subject": exam.subject, "total_marks": exam.total_marks, "status": submission.status.value, "total_score": submission.total_score, "percentage": round(submission.total_score / exam.total_marks * 100) if exam.total_marks else 0, "created_at": submission.created_at, "released_at": submission.released_at, "evaluations": evaluations}
 
 
 @app.get("/api/student/submissions")
 def own_submissions(student: dict = Depends(current_student)):
     with session() as db:
-        submissions = db.scalars(select(Submission).where(Submission.student_id == student["id"]).order_by(Submission.created_at.desc())).all()
+        submissions = db.scalars(select(Submission).where(Submission.student_id == student["id"], Submission.released_at.is_not(None), Submission.archived_at.is_(None)).order_by(Submission.created_at.desc())).all()
         return [student_result(db, submission) for submission in submissions]
 
 
 @app.get("/api/student/submissions/{submission_id}")
 def own_submission(submission_id: str, student: dict = Depends(current_student)):
     with session() as db:
-        submission = db.scalar(select(Submission).where(Submission.id == submission_id, Submission.student_id == student["id"]))
+        submission = db.scalar(select(Submission).where(Submission.id == submission_id, Submission.student_id == student["id"], Submission.released_at.is_not(None), Submission.archived_at.is_(None)))
         if not submission: raise HTTPException(404, "Submission not found")
         return student_result(db, submission)
+
+
+@app.get("/api/student/pages/{page_id}/preview")
+def own_page_preview(page_id: str, student: dict = Depends(current_student)):
+    with session() as db:
+        page = db.scalar(select(SubmissionPage).join(Submission).where(SubmissionPage.id == page_id, Submission.student_id == student["id"], Submission.released_at.is_not(None), Submission.archived_at.is_(None)))
+        if not page:
+            raise HTTPException(404, "Page not found")
+        if page.processed_data:
+            return Response(content=page.processed_data, media_type="image/jpeg")
+        preview = page_preview_path(page)
+        if preview:
+            return FileResponse(preview, media_type="image/jpeg" if page.processed_key else page.mime_type)
+        return Response(content=unavailable_preview(), media_type="image/jpeg", headers={"X-PRISM-Preview": "unavailable"})
 
 
 @app.get("/api/pages/{page_id}")
@@ -1352,7 +1448,15 @@ def own_profile(student: dict = Depends(current_student)):
         profile_student = db.get(Student, student["id"])
         cohort = db.get(ClassCohort, profile_student.class_id) if profile_student else None
         if not profile_student or not cohort: raise HTTPException(404, "Student not found")
-        return profile_data(db, profile_student, cohort.teacher_id)
+        released = db.scalars(select(Submission).where(Submission.student_id == profile_student.id, Submission.released_at.is_not(None), Submission.archived_at.is_(None)).order_by(Submission.created_at.desc())).all()
+        concepts: dict[str, list[float]] = {}
+        for evaluation, criterion in db.execute(select(CriterionEvaluation, RubricCriterion).select_from(CriterionEvaluation).join(RubricCriterion, CriterionEvaluation.criterion_id == RubricCriterion.id).join(Answer, CriterionEvaluation.answer_id == Answer.id).where(Answer.submission_id.in_([item.id for item in released] or ["-"]))):
+            name = criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized"
+            bucket = concepts.setdefault(name, [0, 0])
+            bucket[0] += evaluation.teacher_marks if evaluation.teacher_marks is not None else evaluation.ai_marks
+            bucket[1] += criterion.max_marks
+        performance = [{"concept": name, "mastery": round(score / maximum * 100) if maximum else 0} for name, (score, maximum) in concepts.items()]
+        return {"student": {"id": profile_student.id, "name": profile_student.name, "identifier": profile_student.identifier, "class_id": profile_student.class_id, "classes": [{"id": cohort.id, "name": cohort.name}]}, "concepts": performance, "strengths": [item["concept"] for item in performance if item["mastery"] >= 75], "developing": [item["concept"] for item in performance if item["mastery"] < 75], "submissions": [student_result(db, item) for item in released]}
 
 
 @app.get("/api/exams/{exam_id}/analytics")

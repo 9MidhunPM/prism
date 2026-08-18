@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AccountControl } from "@/components/account-control";
+import { useSession } from "@/components/session-provider";
 import { api } from "@/lib/api";
 
 type Profile = {
@@ -38,6 +39,9 @@ export default function StudentPortal() {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [selected, setSelected] = useState<Submission | null>(null);
   const [error, setError] = useState("");
+  const { account, refresh } = useSession();
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
 
   useEffect(() => {
     Promise.all([
@@ -54,6 +58,17 @@ export default function StudentPortal() {
         ),
       );
   }, []);
+  async function changePassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      await api.post("/api/auth/change-password", { current_password: currentPassword, new_password: newPassword });
+      setCurrentPassword("");
+      setNewPassword("");
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Your password could not be updated.");
+    }
+  }
 
   return (
     <main className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
@@ -92,6 +107,17 @@ export default function StudentPortal() {
                 for final assessment decisions.
               </p>
             </div>
+            {account?.must_change_password && (
+              <section className="surface mb-6 max-w-2xl p-5">
+                <h2 className="font-serif text-2xl font-semibold">Choose your password</h2>
+                <p className="mt-2 text-sm text-[var(--ink-muted)]">Your teacher set a temporary password. Replace it before continuing.</p>
+                <form onSubmit={changePassword} className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <input className="input" type="password" minLength={12} required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} placeholder="Temporary password" />
+                  <input className="input" type="password" minLength={12} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="New password" />
+                  <button className="button-primary sm:col-span-2 sm:justify-self-start" type="submit">Update password</button>
+                </form>
+              </section>
+            )}
             <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">
               <section>
                 <h2 className="font-serif text-2xl font-semibold">

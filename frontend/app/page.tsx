@@ -100,7 +100,12 @@ export default function Home() {
             </Link>
           </p>
         )}
-        <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <Metric
+            label="Active assessments"
+            value={metrics ? String(metrics.active_exams) : "-"}
+            note="Available for marking"
+          />
           <Metric
             label="Papers completed"
             value={
@@ -132,7 +137,7 @@ export default function Home() {
             tone="review"
           />
         </div>
-        <div className="mb-7 grid items-start gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(19rem,.7fr)]">
+        <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,.85fr)]">
           <section className="surface-lined overflow-hidden">
             <div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4">
               <h2 className="font-serif text-2xl font-semibold">
@@ -191,28 +196,16 @@ export default function Home() {
               )}
             </div>
           </section>
-          <section className="surface self-start bg-[var(--brand)] p-5 text-white">
-            <p className="font-serif text-4xl font-semibold">
-              {metrics ? metrics.active_exams : "-"}
-            </p>
-            <p className="mt-1 text-sm text-white/75">active assessments</p>
-            <div className="mt-7 border-t border-white/20 pt-4 text-sm text-white/80">
-              {metrics && metrics.failed_papers > 0
-                ? `${metrics.failed_papers} paper${metrics.failed_papers === 1 ? "" : "s"} need processing attention.`
-                : "No failed processing jobs in the active workspace."}
+          <section id="papers" className="min-w-0">
+            <div className="mb-3 flex items-baseline justify-between">
+              <h2 className="font-serif text-2xl font-semibold tracking-[-0.02em]">
+                Recent papers
+              </h2>
+              <Link href="/submissions" className="button-quiet">
+                View all
+              </Link>
             </div>
-          </section>
-        </div>
-        <section id="papers" className="mx-auto max-w-4xl">
-          <div className="mb-3 flex items-baseline justify-between">
-            <h2 className="font-serif text-2xl font-semibold tracking-[-0.02em]">
-              Recent papers
-            </h2>
-            <span className="text-sm text-[var(--ink-muted)]">
-              Open original paper
-            </span>
-          </div>
-          <div className="surface-lined overflow-hidden">
+            <div className="surface-lined overflow-hidden">
             {data?.submissions.map((item) => (
               <Link
                 key={item.id}
@@ -249,8 +242,14 @@ export default function Home() {
                 Upload a paper to begin the evidence trail.
               </div>
             )}
-          </div>
-        </section>
+            </div>
+            {metrics && metrics.failed_papers > 0 && (
+              <p className="mt-3 text-sm text-[var(--review)]">
+                {metrics.failed_papers} paper{metrics.failed_papers === 1 ? "" : "s"} need processing attention.
+              </p>
+            )}
+          </section>
+        </div>
       </section>
     </AppShell>
   );

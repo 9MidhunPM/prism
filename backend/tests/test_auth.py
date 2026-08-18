@@ -3,6 +3,7 @@ from fastapi import HTTPException, Response
 from app.auth import token_hash
 from app.main import TeacherCredentials, bootstrap_teacher, current_account, current_student, current_teacher, login, logout, own_submission, own_submissions, set_session
 from app.models import Account, AccountRole, AuthSession, ClassCohort, Exam, Student, Submission
+from datetime import datetime, timezone
 from app.demo import seed_demo_accounts
 from app.settings import Settings
 from app import database
@@ -58,7 +59,7 @@ def test_student_session_cannot_resolve_a_teacher_identity(isolated_database):
         db.add(other_student); db.flush()
         exam = Exam(teacher_id=teacher["id"], title="Assessment", subject="Math", total_marks=1)
         db.add(exam); db.flush()
-        own = Submission(exam_id=exam.id, student_id=student.id)
+        own = Submission(exam_id=exam.id, student_id=student.id, released_at=datetime.now(timezone.utc))
         other = Submission(exam_id=exam.id, student_id=other_student.id)
         db.add_all([own, other])
         account = Account(email="student@example.com", password_hash="not-used", role=AccountRole.STUDENT, student_id=student.id)

@@ -9,6 +9,7 @@ export type Account = {
   name: string;
   email: string;
   role: "teacher" | "student";
+  must_change_password?: boolean;
 };
 
 type SessionContextValue = {

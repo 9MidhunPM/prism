@@ -82,6 +82,8 @@ class Account(Base):
     teacher_id: Mapped[str | None] = mapped_column(ForeignKey("teachers.id"), nullable=True, index=True)
     student_id: Mapped[str | None] = mapped_column(ForeignKey("students.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class AuthSession(Base):
@@ -144,6 +146,8 @@ class Submission(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     mapping_review_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_by_teacher_id: Mapped[str | None] = mapped_column(ForeignKey("teachers.id"), nullable=True)
 
 
 class SubmissionPage(Base):

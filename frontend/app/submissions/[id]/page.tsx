@@ -218,10 +218,30 @@ export default function SubmissionPage({
     await api.delete(`/api/submissions/${submission.id}`);
     router.replace("/submissions");
   }
+  async function setReleased(released: boolean) {
+    setSaving(true);
+    try {
+      await api.patch(`/api/submissions/${submission.id}/release`, { released });
+      setSubmission(await api.get(`/api/submissions/${submission.id}`));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The release status could not be updated.");
+    } finally {
+      setSaving(false);
+    }
+  }
   return (
     <AppShell
+      workbench
       actions={
         <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => void setReleased(!submission.released_at)}
+            disabled={saving || (!submission.released_at && !["completed", "review_required"].includes(submission.status))}
+            className={submission.released_at ? "button-secondary" : "button-primary"}
+          >
+            {submission.released_at ? "Unrelease results" : "Release results"}
+          </button>
           <button
             type="button"
             onClick={() => void removePaper()}
@@ -238,8 +258,8 @@ export default function SubmissionPage({
         </div>
       }
     >
-      <div className="mx-auto max-w-[100rem]">
-        <div className="mb-6 flex flex-col justify-between gap-3 border-b border-[var(--line)] pb-6 sm:flex-row sm:items-end">
+      <div className="mx-auto max-w-[100rem] xl:flex xl:h-full xl:flex-col">
+        <div className="mb-6 flex flex-col justify-between gap-3 border-b border-[var(--line)] pb-6 sm:flex-row sm:items-end xl:mb-4 xl:shrink-0 xl:pb-4">
           <div>
             <h1 className="font-serif text-4xl font-semibold tracking-[-0.035em]">
               {submission.student_name}
@@ -258,8 +278,8 @@ export default function SubmissionPage({
               : "Evidence review"}
           </span>
         </div>
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(24rem,.75fr)]">
-          <section className="surface overflow-hidden">
+        <div className="grid gap-6 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1.5fr)_minmax(28rem,1fr)]">
+          <section className="surface overflow-hidden xl:flex xl:min-h-0 xl:flex-col">
             <div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4">
               <div>
                 <h2 className="font-serif text-2xl font-semibold">
@@ -275,7 +295,7 @@ export default function SubmissionPage({
               </span>
             </div>
             {submission.pages.length ? (
-              <div className="grid min-h-[38rem] grid-cols-[5rem_minmax(0,1fr)] bg-[var(--surface-muted)]">
+              <div className="grid min-h-[38rem] grid-cols-[5rem_minmax(0,1fr)] bg-[var(--surface-muted)] xl:min-h-0 xl:flex-1">
                 <nav
                   className="flex flex-col gap-2 border-r border-[var(--line)] bg-[var(--surface)] p-2"
                   aria-label="Paper pages"
@@ -341,7 +361,7 @@ export default function SubmissionPage({
               </div>
             )}
           </section>
-          <aside className="min-w-0">
+          <aside className="min-w-0 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
             <section className="surface overflow-hidden">
               <div className="border-b border-[var(--line)] p-5">
                 <p className="text-sm text-[var(--ink-muted)]">
