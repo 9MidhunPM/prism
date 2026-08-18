@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "@/lib/api";
 import { AppShell } from "@/components/app-shell";
 
 const API = "/api";
@@ -42,6 +43,26 @@ export default function NewExamPage() {
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const [clarifications, setClarifications] = useState<
+    {
+      type: string;
+      question_number: string | null;
+      message: string;
+      required: boolean;
+    }[]
+  >([]);
+  const [classId, setClassId] = useState("");
+  const [classes, setClasses] = useState<{ id: string; name: string }[]>([]);
+  const [confirmedClarifications, setConfirmedClarifications] = useState<
+    string[]
+  >([]);
+
+  useEffect(() => {
+    api
+      .get<{ id: string; name: string }[]>("/api/classes")
+      .then(setClasses)
+      .catch(() => undefined);
+  }, []);
 
   const updateQuestion = (
     index: number,
@@ -105,6 +126,8 @@ export default function NewExamPage() {
   async function importQuestionPaper(file: File | undefined) {
     if (!file) return;
     setImportError("");
+    setImportWarnings([]);
+    setClarifications([]);
     if (!["image/jpeg", "image/png", "application/pdf"].includes(file.type)) {
       setImportError("Choose a JPEG, PNG, or PDF question paper.");
       return;
@@ -138,6 +161,8 @@ export default function NewExamPage() {
         })),
       );
       setImportWarnings(draft.warnings ?? []);
+      setClarifications(draft.clarifications ?? []);
+      setConfirmedClarifications([]);
     } catch (reason) {
       setImportError(
         reason instanceof Error
@@ -172,6 +197,20 @@ export default function NewExamPage() {
       );
       return;
     }
+    if (
+      clarifications.some(
+        (item, index) =>
+          item.required &&
+          !confirmedClarifications.includes(
+            `${item.type}-${item.question_number ?? index}`,
+          ),
+      )
+    ) {
+      setError(
+        "Resolve or confirm every import clarification before saving this exam.",
+      );
+      return;
+    }
     setSaving(true);
     try {
       const response = await fetch(`${API}/exams`, {
@@ -182,6 +221,7 @@ export default function NewExamPage() {
           title,
           subject,
           date: date || null,
+          class_id: classId || null,
           questions: questions.map((question) => ({
             ...question,
             criteria: question.criteria.map((criterion) => ({
@@ -321,7 +361,65 @@ export default function NewExamPage() {
               className="input"
             />
           </Field>
+          <Field label="Class">
+            <select
+              value={classId}
+              onChange={(event) => setClassId(event.target.value)}
+              className="input"
+            >
+              <option value="">No class assigned</option>
+              {classes.map((cohort) => (
+                <option key={cohort.id} value={cohort.id}>
+                  {cohort.name}
+                </option>
+              ))}
+            </select>
+          </Field>
         </section>
+        {clarifications.length > 0 && (
+          <section className="surface-lined mb-6 p-5">
+            <h2 className="font-serif text-2xl font-semibold">
+              Review imported questions
+            </h2>
+            <p className="mt-2 text-sm text-[var(--ink-muted)]">
+              Confirm the question count, marks, and any low-confidence
+              extraction before saving.
+            </p>
+            <div className="mt-4 space-y-3">
+              {clarifications.map((item, index) => {
+                const key = `${item.type}-${item.question_number ?? index}`;
+                const checked = confirmedClarifications.includes(key);
+                return (
+                  <label
+                    key={key}
+                    className="flex cursor-pointer items-start gap-3 rounded-lg bg-[var(--surface-muted)] p-3 text-sm"
+                  >
+                    <input
+                      className="mt-0.5"
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(event) =>
+                        setConfirmedClarifications((current) =>
+                          event.target.checked
+                            ? [...current, key]
+                            : current.filter((value) => value !== key),
+                        )
+                      }
+                    />
+                    <span>
+                      <strong>
+                        {item.question_number
+                          ? `${item.question_number}: `
+                          : ""}
+                      </strong>
+                      {item.message}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </section>
+        )}
         <div className="space-y-5">
           {questions.map((question, questionIndex) => (
             <section key={question.number} className="surface-lined p-5">

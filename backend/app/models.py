@@ -24,6 +24,7 @@ class SubmissionStatus(str, enum.Enum):
     GRADING = "grading"
     REVIEW_REQUIRED = "review_required"
     COMPLETED = "completed"
+    RESCAN_REQUIRED = "rescan_required"
     FAILED = "failed"
 
 
@@ -46,6 +47,7 @@ class ClassCohort(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
     teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
     name: Mapped[str] = mapped_column(String(120))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Student(Base):
@@ -55,6 +57,7 @@ class Student(Base):
     class_id: Mapped[str] = mapped_column(ForeignKey("classes.id"), index=True)
     name: Mapped[str] = mapped_column(String(120))
     identifier: Mapped[str] = mapped_column(String(100))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Account(Base):
@@ -94,6 +97,7 @@ class Exam(Base):
     date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     total_marks: Mapped[float] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Question(Base):
@@ -129,6 +133,7 @@ class Submission(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class SubmissionPage(Base):
@@ -143,6 +148,9 @@ class SubmissionPage(Base):
     image_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quality_status: Mapped[str] = mapped_column(String(30), default="pending")
+    quality_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quality_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class Answer(Base):

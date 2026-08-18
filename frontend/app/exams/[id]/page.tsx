@@ -34,25 +34,60 @@ export default function ExamPage({
   const [exam, setExam] = useState<any>(null);
   const [error, setError] = useState("");
   const [studentName, setStudentName] = useState("");
+  const [studentId, setStudentId] = useState("");
+  const [roster, setRoster] = useState<
+    { id: string; name: string; identifier: string }[]
+  >([]);
   const [pages, setPages] = useState<File[]>([]);
   const [uploadError, setUploadError] = useState("");
   const [submission, setSubmission] = useState<any>(null);
   const [processing, setProcessing] = useState<any>(null);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [existingSubmissions, setExistingSubmissions] = useState<
+    {
+      id: string;
+      student_name: string;
+      total_score: number;
+      created_at: string;
+    }[]
+  >([]);
+  const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    params.then(({ id }) =>
+    params.then(({ id }) => {
       fetch(`${API}/exams/${id}`, { credentials: "include" })
         .then((response) => (response.ok ? response.json() : Promise.reject()))
-        .then(setExam)
+        .then((nextExam) => {
+          setExam(nextExam);
+          if (nextExam.class_id) {
+            fetch(`${API}/classes/${nextExam.class_id}`, {
+              credentials: "include",
+            })
+              .then((response) => (response.ok ? response.json() : null))
+              .then((cohort) => setRoster(cohort?.students ?? []));
+          }
+        })
         .catch(() =>
           setError(
             "This assessment could not be loaded. Sign in and try again.",
           ),
-        ),
-    );
+        );
+      fetch(`${API}/submissions?exam_id=${id}`, { credentials: "include" })
+        .then((response) => (response.ok ? response.json() : []))
+        .then(setExistingSubmissions);
+    });
   }, [params]);
+
+  useEffect(() => {
+    if (!pages[0]) {
+      setLocalPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(pages[0]);
+    setLocalPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [pages]);
 
   useEffect(() => {
     if (
@@ -145,7 +180,7 @@ export default function ExamPage({
   async function upload(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setUploadError("");
-    if (!studentName.trim() || !pages.length) {
+    if ((!studentName.trim() && !studentId) || !pages.length) {
       setUploadError(
         "Add the student name and select their paper pages before uploading.",
       );
@@ -154,6 +189,7 @@ export default function ExamPage({
     setUploading(true);
     const form = new FormData();
     form.set("student_name", studentName.trim());
+    if (studentId) form.set("student_id", studentId);
     pages.forEach((page) => {
       form.append("pages", page);
     });
@@ -210,9 +246,17 @@ export default function ExamPage({
   return (
     <AppShell
       actions={
-        <Link href="/exams/new" className="button-primary">
-          New assessment
-        </Link>
+        <div className="flex gap-2">
+          <Link
+            href={`/exams/${exam.id}/insights`}
+            className="button-secondary"
+          >
+            Insights
+          </Link>
+          <Link href="/exams/new" className="button-primary">
+            New assessment
+          </Link>
+        </div>
       }
     >
       <section className="mx-auto max-w-6xl">
@@ -242,16 +286,40 @@ export default function ExamPage({
               transcription during grading.
             </p>
             <form onSubmit={upload} className="mt-7 space-y-5">
-              <label className="block text-sm font-semibold text-[#25454e]">
-                Student name
-                <input
-                  value={studentName}
-                  onChange={(event) => setStudentName(event.target.value)}
-                  className="input mt-2"
-                  placeholder="e.g. Arun Patel"
-                  autoComplete="name"
-                />
-              </label>
+              {roster.length ? (
+                <label className="block text-sm font-semibold text-[#25454e]">
+                  Student
+                  <select
+                    value={studentId}
+                    onChange={(event) => {
+                      setStudentId(event.target.value);
+                      const student = roster.find(
+                        (item) => item.id === event.target.value,
+                      );
+                      setStudentName(student?.name ?? "");
+                    }}
+                    className="input mt-2"
+                  >
+                    <option value="">Choose a student from this class</option>
+                    {roster.map((student) => (
+                      <option key={student.id} value={student.id}>
+                        {student.name} ({student.identifier})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <label className="block text-sm font-semibold text-[#25454e]">
+                  Student name
+                  <input
+                    value={studentName}
+                    onChange={(event) => setStudentName(event.target.value)}
+                    className="input mt-2"
+                    placeholder="e.g. Arun Patel"
+                    autoComplete="name"
+                  />
+                </label>
+              )}
               <fieldset
                 onDrop={drop}
                 onDragOver={(event) => {
@@ -378,6 +446,34 @@ export default function ExamPage({
                   </ol>
                 </section>
               )}
+              {pages.length > 0 && localPreviewUrl && (
+                <section className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface-muted)]">
+                  <div className="flex items-center justify-between border-b border-[var(--line)] bg-[var(--surface)] px-4 py-3">
+                    <strong className="text-sm">Scan preview</strong>
+                    <span className="text-xs text-[var(--ink-muted)]">
+                      Check orientation and readability before upload
+                    </span>
+                  </div>
+                  {pages[0].type === PDF_TYPE ? (
+                    <object
+                      data={localPreviewUrl}
+                      type="application/pdf"
+                      className="h-80 w-full bg-white"
+                    >
+                      <p className="p-4 text-sm text-[var(--ink-muted)]">
+                        Your browser cannot preview this PDF. It will be
+                        normalized into page images after upload.
+                      </p>
+                    </object>
+                  ) : (
+                    <img
+                      src={localPreviewUrl}
+                      alt="Selected paper preview"
+                      className="h-80 w-full object-contain p-3"
+                    />
+                  )}
+                </section>
+              )}
               {uploadError && (
                 <p
                   role="alert"
@@ -482,6 +578,42 @@ export default function ExamPage({
             </div>
           </aside>
         </div>
+        <section className="mt-8">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="font-serif text-2xl font-semibold">
+              Submitted papers
+            </h2>
+            <Link
+              href={`/submissions?exam_id=${exam.id}`}
+              className="button-quiet"
+            >
+              View all
+            </Link>
+          </div>
+          <div className="surface-lined overflow-hidden">
+            {existingSubmissions.length ? (
+              existingSubmissions.slice(0, 5).map((item) => (
+                <Link
+                  key={item.id}
+                  href={`/submissions/${item.id}`}
+                  className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4 text-sm last:border-0 hover:bg-[var(--surface-muted)]"
+                >
+                  <span>
+                    <strong className="block">{item.student_name}</strong>
+                    <span className="text-[var(--ink-muted)]">
+                      {new Date(item.created_at).toLocaleDateString()}
+                    </span>
+                  </span>
+                  <span className="font-mono">{item.total_score}</span>
+                </Link>
+              ))
+            ) : (
+              <p className="p-5 text-sm text-[var(--ink-muted)]">
+                No papers have been submitted for this assessment.
+              </p>
+            )}
+          </div>
+        </section>
       </section>
     </AppShell>
   );

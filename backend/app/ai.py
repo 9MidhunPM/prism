@@ -58,6 +58,10 @@ class VisualRegion(BaseModel):
 
 class PerceptionResult(BaseModel):
     answers: list[PerceivedAnswer]
+    quality_status: str = "readable"
+    quality_reason: str | None = None
+    quality_confidence: float = Field(default=1, ge=0, le=1)
+    requires_rescan: bool = False
 
 
 class GradeResult(BaseModel):
@@ -119,7 +123,7 @@ async def perceive_page(path: str, mime_type: str, question_numbers: list[str]) 
     prompt = f"""You are PRISM's document perception operation ({PERCEPTION_VERSION}).
 Transcribe only what is visibly handwritten. Map it to these expected question identifiers when visible: {question_numbers}.
 Preserve spelling, grammar, incorrect statements and incorrect formulas exactly. Never solve, improve, or correct the exam. Never infer invisible content.
-Use [ILLEGIBLE] for unreadable text and [UNCERTAIN: option A | option B] for ambiguity. For every uncertain segment, return the exact text, alternatives, and confidence. Record visibly present diagrams, tables, graphs, and formulas as visual/formula regions without judging correctness. Bounding boxes, when visible, are normalized [left, top, right, bottom] values from 0 to 1."""
+Use [ILLEGIBLE] for unreadable text and [UNCERTAIN: option A | option B] for ambiguity. For every uncertain segment, return the exact text, alternatives, and confidence. Record visibly present diagrams, tables, graphs, and formulas as visual/formula regions without judging correctness. Bounding boxes, when visible, are normalized [left, top, right, bottom] values from 0 to 1. Assess the overall page as readable, blurry, or unreadable. Set requires_rescan true only when the page cannot be responsibly assessed from the supplied scan and state the visual reason."""
     response = await openai_client.responses.parse(model=model_for("perception"), input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=PerceptionResult)
     return response.output_parsed
 

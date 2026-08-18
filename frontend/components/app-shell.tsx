@@ -7,7 +7,9 @@ import { AccountControl } from "@/components/account-control";
 
 const items = [
   { href: "/", label: "Workspace", mark: "W" },
+  { href: "/classes", label: "Classes", mark: "C" },
   { href: "/exams", label: "Exams", mark: "E" },
+  { href: "/submissions", label: "Papers", mark: "P" },
   { href: "/assistant", label: "Assistant", mark: "A" },
 ];
 

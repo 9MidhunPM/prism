@@ -104,6 +104,7 @@ class ExamInput(BaseModel):
     title: str
     subject: str
     date: str | None = None
+    class_id: str | None = None
     questions: list[QuestionInput]
 
 
@@ -120,6 +121,19 @@ class AssistantQuery(BaseModel):
     question: str = Field(min_length=3, max_length=1000)
 
 
+class ClassInput(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+
+
+class StudentInput(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    identifier: str = Field(min_length=1, max_length=100)
+
+
+class RosterInput(BaseModel):
+    students: list[StudentInput] = Field(min_length=1, max_length=200)
+
+
 class TeacherCredentials(BaseModel):
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=12, max_length=256)
@@ -128,11 +142,17 @@ class TeacherCredentials(BaseModel):
 
 def imported_draft(result) -> dict:
     warnings = list(result.warnings)
+    clarifications = []
     questions = []
     for question in result.questions:
         criterion_total = sum(criterion.max_marks for criterion in question.criteria)
         if question.max_marks is not None and round(criterion_total, 2) != round(question.max_marks, 2):
             warnings.append(f"{question.number}: suggested criteria total {criterion_total:g}, but the paper shows {question.max_marks:g} marks.")
+            clarifications.append({"type": "criterion_total_mismatch", "question_number": question.number, "message": "Confirm the marks shown on the paper or adjust the rubric total.", "required": True})
+        if question.max_marks is None:
+            clarifications.append({"type": "missing_question_marks", "question_number": question.number, "message": "Enter the maximum marks for this question before saving.", "required": True})
+        if question.confidence < REVIEW_THRESHOLD:
+            clarifications.append({"type": "low_question_confidence", "question_number": question.number, "message": "Check this question against the original paper; its extraction confidence is low.", "required": True})
         questions.append({
             "number": question.number,
             "text": question.text,
@@ -140,7 +160,8 @@ def imported_draft(result) -> dict:
             "confidence": question.confidence,
             "criteria": [criterion.model_dump() for criterion in question.criteria],
         })
-    return {"title": result.title, "subject": result.subject, "questions": questions, "warnings": list(dict.fromkeys(warnings)), "prompt_version": EXAM_IMPORT_VERSION}
+    clarifications.append({"type": "question_count", "question_number": None, "message": f"Confirm that this paper contains {len(questions)} questions.", "required": True})
+    return {"title": result.title, "subject": result.subject, "questions": questions, "warnings": list(dict.fromkeys(warnings)), "clarifications": clarifications, "prompt_version": EXAM_IMPORT_VERSION}
 
 
 def current_account(session_token: str | None = Cookie(default=None, alias="prism_session")) -> dict:
@@ -198,6 +219,13 @@ def owned_submission(db, submission_id: str, teacher_id: str) -> Submission:
     return submission
 
 
+def owned_class(db, class_id: str, teacher_id: str) -> ClassCohort:
+    cohort = db.scalar(select(ClassCohort).where(ClassCohort.id == class_id, ClassCohort.teacher_id == teacher_id))
+    if not cohort:
+        raise HTTPException(404, "Class not found")
+    return cohort
+
+
 def owned_evaluation(db, evaluation_id: str, teacher_id: str) -> CriterionEvaluation:
     evaluation = db.scalar(select(CriterionEvaluation).join(Answer).join(Submission).join(Exam).where(CriterionEvaluation.id == evaluation_id, Exam.teacher_id == teacher_id))
     if not evaluation:
@@ -228,7 +256,7 @@ def exam_detail(exam_id: str, teacher_id: str | None = None) -> dict:
         for question in db.scalars(select(Question).where(Question.exam_id == exam.id).order_by(Question.number)):
             criteria = [criterion_data(c) for c in db.scalars(select(RubricCriterion).where(RubricCriterion.question_id == question.id))]
             questions.append({"id": question.id, "exam_id": question.exam_id, "number": question.number, "text": question.text, "max_marks": sum(c["max_marks"] for c in criteria), "criteria": criteria})
-        return {"id": exam.id, "title": exam.title, "subject": exam.subject, "date": exam.date.isoformat() if exam.date else None, "created_at": exam.created_at, "teacher_id": exam.teacher_id, "questions": questions, "total_marks": sum(q["max_marks"] for q in questions)}
+        return {"id": exam.id, "title": exam.title, "subject": exam.subject, "date": exam.date.isoformat() if exam.date else None, "created_at": exam.created_at, "teacher_id": exam.teacher_id, "class_id": exam.class_id, "archived_at": exam.archived_at, "questions": questions, "total_marks": sum(q["max_marks"] for q in questions)}
 
 
 def score_submission(db, submission: Submission) -> float:
@@ -240,7 +268,9 @@ def score_submission(db, submission: Submission) -> float:
 def create_exam(payload: ExamInput, teacher_id: str) -> dict:
     parsed_date = date.fromisoformat(payload.date) if payload.date else None
     with session() as db:
-        exam = Exam(teacher_id=teacher_id, title=payload.title, subject=payload.subject, date=parsed_date, total_marks=sum(c.max_marks for q in payload.questions for c in q.criteria))
+        if payload.class_id:
+            owned_class(db, payload.class_id, teacher_id)
+        exam = Exam(teacher_id=teacher_id, class_id=payload.class_id, title=payload.title, subject=payload.subject, date=parsed_date, total_marks=sum(c.max_marks for q in payload.questions for c in q.criteria))
         db.add(exam)
         db.flush()
         for question_input in payload.questions:
@@ -263,6 +293,41 @@ def unassigned_class(db, teacher_id: str) -> ClassCohort:
     return cohort
 
 
+def submission_summary(submission: Submission, student: Student, exam: Exam) -> dict:
+    return {
+        "id": submission.id,
+        "exam_id": submission.exam_id,
+        "student_id": submission.student_id,
+        "status": submission.status.value,
+        "total_score": submission.total_score,
+        "created_at": submission.created_at,
+        "error": submission.error,
+        "archived_at": submission.archived_at,
+        "student_name": student.name,
+        "exam_title": exam.title,
+        "class_id": exam.class_id,
+    }
+
+
+def clear_submission_results(db, submission_id: str) -> None:
+    """Remove derived AI results before a retry or page replacement, retaining originals."""
+    evaluations = db.scalars(select(CriterionEvaluation).join(Answer).where(Answer.submission_id == submission_id)).all()
+    for evaluation in evaluations:
+        for evidence in db.scalars(select(EvaluationEvidence).where(EvaluationEvidence.evaluation_id == evaluation.id)):
+            db.delete(evidence)
+        for review in db.scalars(select(ReviewSuggestion).where(ReviewSuggestion.evaluation_id == evaluation.id)):
+            db.delete(review)
+        for override in db.scalars(select(TeacherOverride).where(TeacherOverride.evaluation_id == evaluation.id)):
+            db.delete(override)
+        db.delete(evaluation)
+    for answer in db.scalars(select(Answer).where(Answer.submission_id == submission_id)):
+        for region in db.scalars(select(EvidenceRegion).where(EvidenceRegion.answer_id == answer.id)):
+            db.delete(region)
+        db.delete(answer)
+    for artifact in db.scalars(select(AIArtifact).where(AIArtifact.submission_id == submission_id)):
+        db.delete(artifact)
+
+
 async def process_submission(submission_id: str) -> None:
     set_processing_stage(submission_id, SubmissionStatus.PREPROCESSING, increment_attempts=True)
     try:
@@ -274,13 +339,7 @@ async def process_submission(submission_id: str) -> None:
                 return
             pages = db.scalars(select(SubmissionPage).where(SubmissionPage.submission_id == submission_id).order_by(SubmissionPage.page_number)).all()
             questions = db.scalars(select(Question).where(Question.exam_id == submission.exam_id).order_by(Question.number)).all()
-            old_evaluations = db.scalars(select(CriterionEvaluation).join(Answer).where(Answer.submission_id == submission_id)).all()
-            for evaluation in old_evaluations:
-                for evidence in db.scalars(select(EvaluationEvidence).where(EvaluationEvidence.evaluation_id == evaluation.id)):
-                    db.delete(evidence)
-                db.delete(evaluation)
-            for answer in db.scalars(select(Answer).where(Answer.submission_id == submission_id)):
-                db.delete(answer)
+            clear_submission_results(db, submission_id)
             db.commit()
         set_processing_stage(submission_id, SubmissionStatus.TRANSCRIBING)
         for page in pages:
@@ -291,6 +350,16 @@ async def process_submission(submission_id: str) -> None:
                 artifact = db.scalar(select(AIArtifact).where(AIArtifact.operation == "perception", AIArtifact.prompt_version == "perception_v1", AIArtifact.input_hash == image_hash).order_by(AIArtifact.created_at.desc()))
             perception = PerceptionResult.model_validate(artifact.output) if artifact else await perceive_page(source_key, source_mime, [q.number for q in questions])
             with session() as db:
+                stored_page = db.get(SubmissionPage, page.id)
+                unreadable = (
+                    perception.requires_rescan
+                    or perception.quality_status in {"blurry", "unreadable"}
+                    or not perception.answers
+                    or any("[ILLEGIBLE]" in answer.transcription or answer.confidence < 0.5 for answer in perception.answers)
+                )
+                stored_page.quality_status = "rescan_required" if unreadable else perception.quality_status
+                stored_page.quality_reason = perception.quality_reason or ("No reliable handwritten answers could be read from this page." if not perception.answers else None)
+                stored_page.quality_confidence = perception.quality_confidence
                 if not artifact:
                     db.add(AIArtifact(submission_id=submission_id, operation="perception", model=model_for("perception"), prompt_version="perception_v1", input_hash=image_hash, output=perception.model_dump()))
                 for result_answer in perception.answers:
@@ -303,6 +372,9 @@ async def process_submission(submission_id: str) -> None:
                     for region in result_answer.formula_regions:
                         db.add(EvidenceRegion(answer_id=answer.id, page_id=page.id, kind="formula", text=region.description, bbox={"coordinates": region.bbox}))
                 db.commit()
+            if unreadable:
+                set_processing_stage(submission_id, SubmissionStatus.RESCAN_REQUIRED, "A page is too unclear to grade reliably. Replace the affected scan and retry.")
+                return
         set_processing_stage(submission_id, SubmissionStatus.GRADING)
         for question in questions:
             with session() as db:
@@ -315,7 +387,7 @@ async def process_submission(submission_id: str) -> None:
             for criterion in criteria:
                 result = await grade_criterion(page.processed_key or page.original_key, "image/jpeg" if page.processed_key else page.mime_type, question.text, criterion_data(criterion), transcription)
                 with session() as db:
-                    evaluation = CriterionEvaluation(answer_id=mapped_answers[0].id, criterion_id=criterion.id, ai_marks=min(criterion.max_marks, max(0, result.awarded_marks)), reason=result.reason, confidence=result.confidence, needs_review=result.needs_review or result.confidence < REVIEW_THRESHOLD or any(answer.uncertainty for answer in mapped_answers))
+                    evaluation = CriterionEvaluation(answer_id=mapped_answers[0].id, criterion_id=criterion.id, ai_marks=min(criterion.max_marks, max(0, result.awarded_marks)), reason=result.reason, confidence=result.confidence, needs_review=result.needs_review or result.confidence < REVIEW_THRESHOLD or any(answer.uncertainty or (answer.confidence or 0) < REVIEW_THRESHOLD for answer in mapped_answers))
                     db.add(evaluation)
                     db.flush()
                     for quote in result.evidence_quotes:
@@ -424,14 +496,103 @@ def me(account: dict = Depends(current_account)):
 @app.get("/api/dashboard")
 def dashboard(teacher: dict = Depends(current_teacher)):
     with session() as db:
-        exams = db.scalars(select(Exam).where(Exam.teacher_id == teacher["id"]).order_by(Exam.created_at.desc())).all()
+        exams = db.scalars(select(Exam).where(Exam.teacher_id == teacher["id"], Exam.archived_at.is_(None)).order_by(Exam.created_at.desc())).all()
         pending = db.scalar(select(func.count()).select_from(CriterionEvaluation).join(Answer).join(Submission).join(Exam).where(Exam.teacher_id == teacher["id"], CriterionEvaluation.needs_review.is_(True), CriterionEvaluation.teacher_marks.is_(None))) or 0
-        rows = db.execute(select(Submission, Student, Exam).join(Student).join(Exam).where(Exam.teacher_id == teacher["id"]).order_by(Submission.created_at.desc()).limit(8)).all()
-        return {"exams": [{"id": e.id, "title": e.title, "subject": e.subject, "date": e.date, "created_at": e.created_at, "teacher_id": e.teacher_id} for e in exams], "pending_reviews": pending, "submissions": [{"id": s.id, "exam_id": s.exam_id, "student_id": s.student_id, "status": s.status.value, "total_score": s.total_score, "created_at": s.created_at, "error": s.error, "student_name": st.name, "exam_title": ex.title} for s, st, ex in rows]}
+        rows = db.execute(select(Submission, Student, Exam).join(Student).join(Exam).where(Exam.teacher_id == teacher["id"], Submission.archived_at.is_(None)).order_by(Submission.created_at.desc()).limit(8)).all()
+        return {"exams": [{"id": e.id, "title": e.title, "subject": e.subject, "date": e.date, "created_at": e.created_at, "teacher_id": e.teacher_id, "class_id": e.class_id} for e in exams], "pending_reviews": pending, "submissions": [submission_summary(s, st, ex) for s, st, ex in rows]}
 
 
 @app.post("/api/exams")
 def post_exam(payload: ExamInput, teacher: dict = Depends(current_teacher)): return create_exam(payload, teacher["id"])
+
+
+@app.get("/api/classes")
+def get_classes(include_archived: bool = False, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        statement = select(ClassCohort).where(ClassCohort.teacher_id == teacher["id"])
+        if not include_archived:
+            statement = statement.where(ClassCohort.archived_at.is_(None))
+        cohorts = db.scalars(statement.order_by(ClassCohort.name)).all()
+        return [{"id": cohort.id, "name": cohort.name, "archived_at": cohort.archived_at, "student_count": db.scalar(select(func.count()).select_from(Student).where(Student.class_id == cohort.id, Student.archived_at.is_(None))) or 0} for cohort in cohorts]
+
+
+@app.post("/api/classes", status_code=201)
+def create_class(payload: ClassInput, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        cohort = ClassCohort(teacher_id=teacher["id"], name=payload.name.strip())
+        db.add(cohort)
+        db.commit()
+        return {"id": cohort.id, "name": cohort.name, "student_count": 0}
+
+
+@app.get("/api/classes/{class_id}")
+def get_class(class_id: str, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        cohort = owned_class(db, class_id, teacher["id"])
+        students = db.scalars(select(Student).where(Student.class_id == cohort.id, Student.archived_at.is_(None)).order_by(Student.name)).all()
+        exams = db.scalars(select(Exam).where(Exam.class_id == cohort.id, Exam.archived_at.is_(None)).order_by(Exam.created_at.desc())).all()
+        return {"id": cohort.id, "name": cohort.name, "archived_at": cohort.archived_at, "students": [{"id": student.id, "name": student.name, "identifier": student.identifier} for student in students], "exams": [{"id": exam.id, "title": exam.title, "subject": exam.subject, "total_marks": exam.total_marks} for exam in exams]}
+
+
+@app.patch("/api/classes/{class_id}")
+def update_class(class_id: str, payload: ClassInput, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        cohort = owned_class(db, class_id, teacher["id"])
+        cohort.name = payload.name.strip()
+        db.commit()
+    return {"id": class_id, "name": payload.name.strip()}
+
+
+@app.patch("/api/classes/{class_id}/archive")
+def archive_class(class_id: str, archived: bool = True, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        cohort = owned_class(db, class_id, teacher["id"])
+        cohort.archived_at = datetime.now(timezone.utc) if archived else None
+        db.commit()
+    return {"id": class_id, "archived": archived}
+
+
+@app.post("/api/classes/{class_id}/students", status_code=201)
+def create_student(class_id: str, payload: StudentInput, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        owned_class(db, class_id, teacher["id"])
+        existing = db.scalar(select(Student).where(Student.class_id == class_id, Student.identifier == payload.identifier.strip()))
+        if existing:
+            raise HTTPException(409, "A student with this identifier already exists in the class.")
+        student = Student(class_id=class_id, name=payload.name.strip(), identifier=payload.identifier.strip())
+        db.add(student)
+        db.commit()
+        return {"id": student.id, "name": student.name, "identifier": student.identifier}
+
+
+@app.post("/api/classes/{class_id}/students/import", status_code=201)
+def import_students(class_id: str, payload: RosterInput, teacher: dict = Depends(current_teacher)):
+    created = []
+    with session() as db:
+        owned_class(db, class_id, teacher["id"])
+        identifiers = [student.identifier.strip() for student in payload.students]
+        if len(identifiers) != len(set(identifiers)):
+            raise HTTPException(422, "Each roster identifier must be unique.")
+        existing = set(db.scalars(select(Student.identifier).where(Student.class_id == class_id, Student.identifier.in_(identifiers))).all())
+        if existing:
+            raise HTTPException(409, f"These identifiers already exist: {', '.join(sorted(existing))}")
+        for item in payload.students:
+            student = Student(class_id=class_id, name=item.name.strip(), identifier=item.identifier.strip())
+            db.add(student)
+            created.append(student)
+        db.commit()
+        return {"created": [{"id": student.id, "name": student.name, "identifier": student.identifier} for student in created]}
+
+
+@app.patch("/api/students/{student_id}/archive")
+def archive_student(student_id: str, archived: bool = True, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        student = db.scalar(select(Student).join(ClassCohort).where(Student.id == student_id, ClassCohort.teacher_id == teacher["id"]))
+        if not student:
+            raise HTTPException(404, "Student not found")
+        student.archived_at = datetime.now(timezone.utc) if archived else None
+        db.commit()
+    return {"id": student_id, "archived": archived}
 
 
 @app.post("/api/exam-drafts/import")
@@ -473,8 +634,12 @@ async def import_exam_draft(file: UploadFile = File(...), teacher: dict = Depend
 
 
 @app.get("/api/exams")
-def get_exams(teacher: dict = Depends(current_teacher)):
-    with session() as db: ids = db.scalars(select(Exam.id).where(Exam.teacher_id == teacher["id"]).order_by(Exam.created_at.desc())).all()
+def get_exams(include_archived: bool = False, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        statement = select(Exam.id).where(Exam.teacher_id == teacher["id"])
+        if not include_archived:
+            statement = statement.where(Exam.archived_at.is_(None))
+        ids = db.scalars(statement.order_by(Exam.created_at.desc())).all()
     return [exam_detail(exam_id, teacher["id"]) for exam_id in ids]
 
 
@@ -482,8 +647,32 @@ def get_exams(teacher: dict = Depends(current_teacher)):
 def get_exam(exam_id: str, teacher: dict = Depends(current_teacher)): return exam_detail(exam_id, teacher["id"])
 
 
+@app.patch("/api/exams/{exam_id}/archive")
+def archive_exam(exam_id: str, archived: bool = True, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        exam = owned_exam(db, exam_id, teacher["id"])
+        exam.archived_at = datetime.now(timezone.utc) if archived else None
+        db.commit()
+    return {"id": exam_id, "archived": archived}
+
+
+@app.get("/api/submissions")
+def get_submissions(exam_id: str | None = None, class_id: str | None = None, student_id: str | None = None, include_archived: bool = False, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        statement = select(Submission, Student, Exam).join(Student).join(Exam).where(Exam.teacher_id == teacher["id"])
+        if exam_id:
+            statement = statement.where(Submission.exam_id == exam_id)
+        if class_id:
+            statement = statement.where(Student.class_id == class_id)
+        if isinstance(student_id, str) and student_id:
+            statement = statement.where(Submission.student_id == student_id)
+        if not include_archived:
+            statement = statement.where(Submission.archived_at.is_(None))
+        return [submission_summary(submission, student, exam) for submission, student, exam in db.execute(statement.order_by(Submission.created_at.desc())).all()]
+
+
 @app.post("/api/exams/{exam_id}/submissions")
-async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, student_name: str = Form(...), file: UploadFile | None = File(None), pages: list[UploadFile] | None = File(None), teacher: dict = Depends(current_teacher)):
+async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, student_name: str = Form(""), file: UploadFile | None = File(None), pages: list[UploadFile] | None = File(None), student_id: str | None = Form(None), teacher: dict = Depends(current_teacher)):
     uploads = pages if isinstance(pages, list) else ([file] if isinstance(file, UploadFile) else [])
     if not uploads:
         raise HTTPException(422, "Upload one PDF or at least one image page.")
@@ -498,7 +687,8 @@ async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, stu
         raise HTTPException(400, "An uploaded page is empty.")
     if sum(len(contents) for _, contents in payloads) > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(413, f"All pages together must be smaller than {settings.max_upload_mb} MB.")
-    with session() as db: owned_exam(db, exam_id, teacher["id"])
+    with session() as db:
+        exam = owned_exam(db, exam_id, teacher["id"])
     source_hash = hashlib.sha256(b"".join(hashlib.sha256(contents).digest() for _, contents in payloads)).hexdigest()
     normalized_pages: list[dict] = []
     for upload, contents in payloads:
@@ -510,20 +700,29 @@ async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, stu
     if len(normalized_pages) > settings.max_submission_pages:
         raise HTTPException(422, f"Submissions may contain up to {settings.max_submission_pages} pages.")
     with session() as db:
-        cohort = unassigned_class(db, teacher["id"])
-        student = db.scalar(select(Student).where(Student.class_id == cohort.id, Student.name == student_name))
-        if not student:
-            student = Student(class_id=cohort.id, name=student_name, identifier=f"UP-{uuid.uuid4().hex[:6]}"); db.add(student); db.flush()
+        if isinstance(student_id, str) and student_id:
+            student = db.scalar(select(Student).join(ClassCohort).where(Student.id == student_id, ClassCohort.teacher_id == teacher["id"], Student.archived_at.is_(None)))
+            if not student:
+                raise HTTPException(404, "Student not found in your active roster.")
+            if exam.class_id and student.class_id != exam.class_id:
+                raise HTTPException(422, "Choose a student from the exam class.")
+        else:
+            if not student_name.strip():
+                raise HTTPException(422, "Choose a roster student or provide a student name.")
+            cohort = db.get(ClassCohort, exam.class_id) if exam.class_id else unassigned_class(db, teacher["id"])
+            student = db.scalar(select(Student).where(Student.class_id == cohort.id, Student.name == student_name.strip()))
+            if not student:
+                student = Student(class_id=cohort.id, name=student_name.strip(), identifier=f"UP-{uuid.uuid4().hex[:6]}"); db.add(student); db.flush()
         duplicate = db.scalar(select(Submission).where(Submission.exam_id == exam_id, Submission.student_id == student.id, Submission.source_hash == source_hash).order_by(Submission.created_at.desc()))
         if duplicate:
-            return {"id": duplicate.id, "status": duplicate.status.value, "student_name": student_name, "page_count": db.scalar(select(func.count()).select_from(SubmissionPage).where(SubmissionPage.submission_id == duplicate.id)), "duplicate": True}
+            return {"id": duplicate.id, "status": duplicate.status.value, "student_name": student.name, "page_count": db.scalar(select(func.count()).select_from(SubmissionPage).where(SubmissionPage.submission_id == duplicate.id)), "duplicate": True}
         submission = Submission(exam_id=exam_id, student_id=student.id, status=SubmissionStatus.UPLOADED, source_hash=source_hash)
         db.add(submission); db.flush(); db.add(ProcessingJob(submission_id=submission.id, stage=SubmissionStatus.UPLOADED))
         for page_number, page in enumerate(normalized_pages, 1):
             db.add(SubmissionPage(submission_id=submission.id, page_number=page_number, original_key=page["original_key"], mime_type=page["mime_type"], **{key: page[key] for key in ("processed_key", "width", "height", "image_hash")}))
         db.commit(); submission_id = submission.id
     background_tasks.add_task(process_submission, submission_id)
-    return {"id": submission_id, "status": "uploaded", "student_name": student_name, "page_count": len(normalized_pages), "duplicate": False}
+    return {"id": submission_id, "status": "uploaded", "student_name": student.name, "page_count": len(normalized_pages), "duplicate": False}
 
 
 @app.post("/api/submissions/{submission_id}/process")
@@ -538,7 +737,7 @@ async def start_processing(submission_id: str, background_tasks: BackgroundTasks
 async def retry_processing(submission_id: str, background_tasks: BackgroundTasks, teacher: dict = Depends(current_teacher)):
     with session() as db:
         submission = owned_submission(db, submission_id, teacher["id"])
-        if submission.status not in {SubmissionStatus.FAILED, SubmissionStatus.REVIEW_REQUIRED, SubmissionStatus.COMPLETED}: raise HTTPException(409, "Only finished or failed submissions can be retried.")
+        if submission.status not in {SubmissionStatus.FAILED, SubmissionStatus.REVIEW_REQUIRED, SubmissionStatus.COMPLETED, SubmissionStatus.RESCAN_REQUIRED}: raise HTTPException(409, "Only finished or failed submissions can be retried.")
     background_tasks.add_task(process_submission, submission_id); return {"id": submission_id, "status": "queued"}
 
 
@@ -554,7 +753,7 @@ def processing_status(submission_id: str, teacher: dict = Depends(current_teache
 def get_submission(submission_id: str, teacher: dict = Depends(current_teacher)):
     with session() as db:
         submission = owned_submission(db, submission_id, teacher["id"]); student = db.get(Student, submission.student_id); exam = db.get(Exam, submission.exam_id)
-        pages = [{"id": p.id, "page_number": p.page_number, "width": p.width, "height": p.height, "url": f"/api/pages/{p.id}"} for p in db.scalars(select(SubmissionPage).where(SubmissionPage.submission_id == submission_id).order_by(SubmissionPage.page_number))]
+        pages = [{"id": p.id, "page_number": p.page_number, "width": p.width, "height": p.height, "preview_url": f"/api/pages/{p.id}/preview", "original_url": f"/api/pages/{p.id}", "quality_status": p.quality_status, "quality_reason": p.quality_reason, "quality_confidence": p.quality_confidence} for p in db.scalars(select(SubmissionPage).where(SubmissionPage.submission_id == submission_id).order_by(SubmissionPage.page_number))]
         answers = []
         for answer in db.scalars(select(Answer).where(Answer.submission_id == submission_id)):
             regions = db.scalars(select(EvidenceRegion).where(EvidenceRegion.answer_id == answer.id)).all()
@@ -562,7 +761,7 @@ def get_submission(submission_id: str, teacher: dict = Depends(current_teacher))
             answers.append({"id": answer.id, "question_id": answer.question_id, "page_id": answer.page_id, "transcription": answer.transcription, "uncertainty": answer.uncertainty, "prompt_version": answer.prompt_version, "confidence": answer.confidence, "visual_regions": [region_data(region) for region in regions if region.kind != "formula"], "formula_regions": [region_data(region) for region in regions if region.kind == "formula"]})
         evaluations = []
         for ev, criterion, question in db.execute(select(CriterionEvaluation, RubricCriterion, Question).select_from(CriterionEvaluation).join(RubricCriterion, CriterionEvaluation.criterion_id == RubricCriterion.id).join(Question, RubricCriterion.question_id == Question.id).join(Answer, CriterionEvaluation.answer_id == Answer.id).where(Answer.submission_id == submission_id).order_by(Question.number)):
-            evaluations.append({"id": ev.id, "ai_marks": ev.ai_marks, "teacher_marks": ev.teacher_marks, "reason": ev.reason, "confidence": ev.confidence, "needs_review": ev.needs_review, "criterion_title": criterion.title, "criterion_description": criterion.description, "max_marks": criterion.max_marks, "concept": criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized", "question_id": question.id, "question_number": question.number, "question_text": question.text, "evidence": [{"page": p.page_number if (p := db.get(SubmissionPage, evidence.page_id)) else None, "quote": evidence.quote} for evidence in db.scalars(select(EvaluationEvidence).where(EvaluationEvidence.evaluation_id == ev.id))], "effective_marks": ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks})
+            evaluations.append({"id": ev.id, "ai_marks": ev.ai_marks, "teacher_marks": ev.teacher_marks, "reason": ev.reason, "confidence": ev.confidence, "needs_review": ev.needs_review, "criterion_title": criterion.title, "criterion_description": criterion.description, "max_marks": criterion.max_marks, "concept": criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized", "question_id": question.id, "question_number": question.number, "question_text": question.text, "evidence": [{"page_id": evidence.page_id, "page": p.page_number if (p := db.get(SubmissionPage, evidence.page_id)) else None, "quote": evidence.quote} for evidence in db.scalars(select(EvaluationEvidence).where(EvaluationEvidence.evaluation_id == ev.id))], "effective_marks": ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks})
         return {"id": submission.id, "exam_id": submission.exam_id, "student_id": submission.student_id, "status": submission.status.value, "total_score": submission.total_score, "created_at": submission.created_at, "error": submission.error, "student_name": student.name, "exam_title": exam.title, "pages": pages, "answers": answers, "evaluations": evaluations}
 
 
@@ -593,8 +792,63 @@ def own_submission(submission_id: str, student: dict = Depends(current_student))
 def get_page(page_id: str, teacher: dict = Depends(current_teacher)):
     with session() as db:
         page = db.scalar(select(SubmissionPage).join(Submission).join(Exam).where(SubmissionPage.id == page_id, Exam.teacher_id == teacher["id"]))
-        if not page: raise HTTPException(404, "Page not found")
-        return FileResponse(page.original_key, media_type=page.mime_type)
+        if not page or not Path(page.original_key).is_file(): raise HTTPException(404, "Original page not found")
+        return FileResponse(page.original_key, media_type=page.mime_type, filename=Path(page.original_key).name)
+
+
+@app.get("/api/pages/{page_id}/preview")
+def get_page_preview(page_id: str, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        page = db.scalar(select(SubmissionPage).join(Submission).join(Exam).where(SubmissionPage.id == page_id, Exam.teacher_id == teacher["id"]))
+        if not page:
+            raise HTTPException(404, "Page not found")
+        preview = page.processed_key or page.original_key
+        if not Path(preview).is_file():
+            raise HTTPException(404, "Page preview not found")
+        return FileResponse(preview, media_type="image/jpeg" if page.processed_key else page.mime_type)
+
+
+@app.patch("/api/submissions/{submission_id}/archive")
+def archive_submission(submission_id: str, archived: bool = True, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        submission = owned_submission(db, submission_id, teacher["id"])
+        submission.archived_at = datetime.now(timezone.utc) if archived else None
+        db.commit()
+    return {"id": submission_id, "archived": archived}
+
+
+@app.put("/api/submissions/{submission_id}/pages/{page_id}")
+async def replace_submission_page(submission_id: str, page_id: str, background_tasks: BackgroundTasks, file: UploadFile = File(...), teacher: dict = Depends(current_teacher)):
+    if file.content_type not in {"image/jpeg", "image/png"}:
+        raise HTTPException(415, "Rescan replacement must be a JPEG or PNG image.")
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(400, "The replacement page is empty.")
+    path = UPLOADS / f"rescan-{uuid.uuid4()}{'.jpg' if file.content_type == 'image/jpeg' else '.png'}"
+    path.write_bytes(contents)
+    normalized = normalize_pages(path, file.content_type)
+    if len(normalized) != 1:
+        raise HTTPException(422, "Replace one page with one image.")
+    with session() as db:
+        submission = owned_submission(db, submission_id, teacher["id"])
+        page = db.scalar(select(SubmissionPage).where(SubmissionPage.id == page_id, SubmissionPage.submission_id == submission.id))
+        if not page:
+            raise HTTPException(404, "Submission page not found")
+        clear_submission_results(db, submission_id)
+        page.original_key = str(path)
+        page.mime_type = file.content_type
+        page.processed_key = normalized[0]["processed_key"]
+        page.image_hash = normalized[0]["image_hash"]
+        page.width = normalized[0]["width"]
+        page.height = normalized[0]["height"]
+        page.quality_status = "pending"
+        page.quality_reason = None
+        page.quality_confidence = None
+        submission.total_score = 0
+        submission.status = SubmissionStatus.UPLOADED
+        db.commit()
+    background_tasks.add_task(process_submission, submission_id)
+    return {"id": submission_id, "status": "queued", "replaced_page_id": page_id}
 
 
 @app.post("/api/evaluations/{evaluation_id}/review")
@@ -650,7 +904,8 @@ def profile_data(db, student: Student, teacher_id: str) -> dict:
     for ev, criterion in concept_rows(db, teacher_id, student_id=student.id):
         name = criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized"; bucket = concepts.setdefault(name, [0, 0]); bucket[0] += ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks; bucket[1] += criterion.max_marks
     performance = [{"concept": name, "mastery": round(score / maximum * 100) if maximum else 0} for name, (score, maximum) in concepts.items()]
-    return {"student": {"id": student.id, "name": student.name, "identifier": student.identifier}, "concepts": performance, "strengths": [p["concept"] for p in performance if p["mastery"] >= 75], "developing": [p["concept"] for p in performance if p["mastery"] < 75]}
+    submissions = db.scalars(select(Submission).where(Submission.student_id == student.id, Submission.archived_at.is_(None)).order_by(Submission.created_at.desc())).all()
+    return {"student": {"id": student.id, "name": student.name, "identifier": student.identifier, "class_id": student.class_id}, "concepts": performance, "strengths": [p["concept"] for p in performance if p["mastery"] >= 75], "developing": [p["concept"] for p in performance if p["mastery"] < 75], "submissions": [{"id": submission.id, "exam_id": submission.exam_id, "score": submission.total_score, "status": submission.status.value, "created_at": submission.created_at} for submission in submissions]}
 
 
 @app.get("/api/students/{student_id}/profile")
@@ -659,6 +914,24 @@ def student_profile(student_id: str, teacher: dict = Depends(current_teacher)):
         student = db.scalar(select(Student).join(ClassCohort).where(Student.id == student_id, ClassCohort.teacher_id == teacher["id"]))
         if not student: raise HTTPException(404, "Student not found")
         return profile_data(db, student, teacher["id"])
+
+
+@app.get("/api/classes/{class_id}/analytics")
+def class_analytics(class_id: str, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        cohort = owned_class(db, class_id, teacher["id"])
+        students = db.scalars(select(Student).where(Student.class_id == class_id, Student.archived_at.is_(None)).order_by(Student.name)).all()
+        submissions = db.scalars(select(Submission).join(Student).where(Student.class_id == class_id, Submission.archived_at.is_(None))).all()
+        concepts: dict[str, list[float]] = {}
+        for evaluation, criterion in db.execute(select(CriterionEvaluation, RubricCriterion).select_from(CriterionEvaluation).join(RubricCriterion, CriterionEvaluation.criterion_id == RubricCriterion.id).join(Answer, CriterionEvaluation.answer_id == Answer.id).join(Submission, Answer.submission_id == Submission.id).join(Student, Submission.student_id == Student.id).where(Student.class_id == class_id)):
+            marks = evaluation.teacher_marks if evaluation.teacher_marks is not None else evaluation.ai_marks
+            name = criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized"
+            bucket = concepts.setdefault(name, [0, 0, 0])
+            bucket[0] += marks
+            bucket[1] += criterion.max_marks
+            bucket[2] += int(evaluation.needs_review)
+        scores = [submission.total_score for submission in submissions if submission.status in {SubmissionStatus.COMPLETED, SubmissionStatus.REVIEW_REQUIRED}]
+        return {"class": {"id": cohort.id, "name": cohort.name}, "student_count": len(students), "submission_count": len(submissions), "average_score": round(sum(scores) / len(scores), 2) if scores else 0, "concepts": [{"name": name, "mastery": round(bucket[0] / bucket[1] * 100) if bucket[1] else 0, "review_rate": round(bucket[2] / len(submissions) * 100) if submissions else 0} for name, bucket in sorted(concepts.items(), key=lambda item: item[1][0] / item[1][1] if item[1][1] else 0)], "students": [{"id": student.id, "name": student.name, "identifier": student.identifier, "profile": profile_data(db, student, teacher["id"])} for student in students]}
 
 
 @app.get("/api/student/profile")

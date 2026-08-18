@@ -157,7 +157,12 @@ export default function Home() {
               )}
             </div>
           </section>
-          <ReviewPanel detail={detail} onReview={review} onDecide={decide} />
+          <ReviewPanel
+            submissionId={selected?.id}
+            detail={detail}
+            onReview={review}
+            onDecide={decide}
+          />
         </div>
       </section>
     </AppShell>
@@ -187,10 +192,12 @@ function Metric({
 }
 
 function ReviewPanel({
+  submissionId,
   detail,
   onReview,
   onDecide,
 }: {
+  submissionId?: string;
   detail: any;
   onReview: (id: string) => void;
   onDecide: (decision: "accept" | "reject") => void;
@@ -212,6 +219,14 @@ function ReviewPanel({
         <h2 className="font-serif text-2xl font-semibold">
           {detail.student_name}
         </h2>
+        {submissionId && (
+          <Link
+            href={`/submissions/${submissionId}`}
+            className="button-quiet mt-2 -ml-2"
+          >
+            Open original paper
+          </Link>
+        )}
       </div>
       <div className="max-h-[525px] divide-y divide-[var(--line)] overflow-y-auto">
         {detail.evaluations.map((item: any) => (

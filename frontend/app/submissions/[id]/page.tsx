@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
+import { api } from "@/lib/api";
 
 const API = "/api";
 
@@ -11,6 +13,7 @@ export default function SubmissionPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const router = useRouter();
   const [submission, setSubmission] = useState<any>(null);
   const [selected, setSelected] = useState<any>(null);
   const [error, setError] = useState("");
@@ -32,6 +35,42 @@ export default function SubmissionPage({
         .catch(() => setError("This submission could not be loaded.")),
     );
   }, [params]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        !submission ||
+        ["INPUT", "TEXTAREA", "SELECT"].includes(
+          (event.target as HTMLElement)?.tagName,
+        )
+      )
+        return;
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const questions: any[] = Array.from(
+        new Map(
+          submission.evaluations.map((evaluation: any) => [
+            evaluation.question_id,
+            evaluation,
+          ]),
+        ).values(),
+      );
+      const index = questions.findIndex(
+        (evaluation: any) => evaluation.question_id === selected?.question_id,
+      );
+      const next = questions[index + (event.key === "ArrowRight" ? 1 : -1)];
+      if (!next) return;
+      event.preventDefault();
+      setSelected(next);
+      setProposal(null);
+      const evidencePageId = next.evidence?.[0]?.page_id;
+      const pageIndex = submission.pages.findIndex(
+        (page: any) => page.id === evidencePageId,
+      );
+      if (pageIndex >= 0) setActivePage(pageIndex);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selected, submission]);
 
   if (error)
     return (
@@ -47,6 +86,20 @@ export default function SubmissionPage({
     );
   const answer = submission.answers?.find(
     (item: any) => item.question_id === selected?.question_id,
+  );
+  const questions: any[] = Array.from(
+    new Map(
+      submission.evaluations.map((evaluation: any) => [
+        evaluation.question_id,
+        evaluation,
+      ]),
+    ).values(),
+  ) as any[];
+  const activeQuestionIndex = questions.findIndex(
+    (evaluation) => evaluation.question_id === selected?.question_id,
+  );
+  const activeEvaluations = submission.evaluations.filter(
+    (evaluation: any) => evaluation.question_id === selected?.question_id,
   );
   async function saveOverride(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -111,15 +164,59 @@ export default function SubmissionPage({
     }
     setSaving(false);
   }
+  async function replacePage(file: File | undefined) {
+    const page = submission?.pages[activePage];
+    if (!file || !page) return;
+    setSaving(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.set("file", file);
+      await api.request(`/api/submissions/${submission.id}/pages/${page.id}`, {
+        method: "PUT",
+        body: form,
+      });
+      setSubmission(await api.get(`/api/submissions/${submission.id}`));
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "The replacement scan could not be uploaded.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function archive() {
+    if (
+      !window.confirm(
+        "Archive this paper? It will be hidden from normal views but preserved for audit history.",
+      )
+    )
+      return;
+    await api.patch(`/api/submissions/${submission.id}/archive`, {
+      archived: true,
+    });
+    router.replace("/submissions");
+  }
   return (
     <AppShell
       actions={
-        <Link
-          href={`/exams/${submission.exam_id ?? ""}`}
-          className="button-secondary"
-        >
-          Back to exam
-        </Link>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => void archive()}
+            className="button-quiet"
+          >
+            Archive
+          </button>
+          <Link
+            href={`/exams/${submission.exam_id}`}
+            className="button-secondary"
+          >
+            Back to exam
+          </Link>
+        </div>
       }
     >
       <div className="mx-auto max-w-7xl">
@@ -132,8 +229,12 @@ export default function SubmissionPage({
               {submission.exam_title} · {submission.total_score} marks
             </p>
           </div>
-          <span className="status-pill status-neutral">
-            Teacher decision required
+          <span
+            className={`status-pill ${submission.status === "rescan_required" ? "status-review" : "status-neutral"}`}
+          >
+            {submission.status === "rescan_required"
+              ? "Rescan required"
+              : "Evidence review"}
           </span>
         </div>
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(21rem,.8fr)]">
@@ -167,7 +268,7 @@ export default function SubmissionPage({
                       className={`overflow-hidden rounded-md border p-1 text-xs font-semibold transition-colors ${activePage === index ? "border-[var(--brand)] bg-[var(--brand-soft)] text-[var(--brand-strong)]" : "border-[var(--line)] text-[var(--ink-muted)]"}`}
                     >
                       <img
-                        src={`${API.replace(/\/api$/, "")}${page.url}`}
+                        src={`${API.replace(/\/api$/, "")}${page.preview_url}`}
                         alt=""
                         className="mb-1 aspect-[3/4] w-full object-cover"
                       />
@@ -177,7 +278,7 @@ export default function SubmissionPage({
                 </nav>
                 <div className="flex items-center justify-center overflow-auto p-4">
                   <img
-                    src={`${API.replace(/\/api$/, "")}${submission.pages[activePage]?.url}`}
+                    src={`${API.replace(/\/api$/, "")}${submission.pages[activePage]?.preview_url}`}
                     alt={`Original paper page ${submission.pages[activePage]?.page_number}`}
                     className="max-h-[44rem] w-auto max-w-full rounded-md shadow-[0_12px_28px_rgb(30_42_43_/_0.14)]"
                   />
@@ -188,6 +289,31 @@ export default function SubmissionPage({
                 No original paper is attached to this cached submission.
               </p>
             )}
+            {submission.pages[activePage]?.quality_status ===
+              "rescan_required" && (
+              <div className="border-t border-[var(--line)] bg-[var(--review-soft)] p-4">
+                <p className="text-sm font-semibold text-[var(--review)]">
+                  Rescan required
+                </p>
+                <p className="mt-1 text-sm text-[var(--review)]">
+                  {submission.pages[activePage]?.quality_reason ??
+                    "This page is too unclear to grade responsibly."}
+                </p>
+                <label className="button-secondary mt-3 cursor-pointer">
+                  <span>{saving ? "Uploading..." : "Replace this page"}</span>
+                  <input
+                    className="sr-only"
+                    disabled={saving}
+                    type="file"
+                    accept="image/jpeg,image/png"
+                    onChange={(event) => {
+                      void replacePage(event.target.files?.[0]);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+            )}
           </section>
           <aside className="min-w-0">
             <section className="surface overflow-hidden">
@@ -196,17 +322,25 @@ export default function SubmissionPage({
                   Assessment result
                 </p>
                 <h2 className="font-serif text-2xl font-semibold">
-                  Criterion review
+                  Question review
                 </h2>
+                <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                  Use Left and Right arrow keys to move between questions.
+                </p>
               </div>
               <div className="max-h-[23rem] divide-y divide-[var(--line)] overflow-y-auto">
-                {submission.evaluations.map((evaluation: any) => (
+                {questions.map((evaluation) => (
                   <button
                     type="button"
                     key={evaluation.id}
                     onClick={() => {
                       setSelected(evaluation);
                       setProposal(null);
+                      const pageIndex = submission.pages.findIndex(
+                        (page: any) =>
+                          page.id === evaluation.evidence?.[0]?.page_id,
+                      );
+                      if (pageIndex >= 0) setActivePage(pageIndex);
                     }}
                     className={`w-full p-4 text-left transition-colors duration-150 ${selected?.id === evaluation.id ? "bg-[var(--brand-soft)]" : "hover:bg-[var(--surface-muted)]"}`}
                   >
@@ -251,6 +385,50 @@ export default function SubmissionPage({
                       : "High confidence"}
                   </span>
                 </div>
+                <p className="mt-2 text-xs text-[var(--ink-muted)]">
+                  Model confidence: {Math.round(selected.confidence * 100)}%.
+                  This is a review signal, not a calibrated probability.
+                </p>
+                <div className="mt-3 flex items-center justify-between border-y border-[var(--line)] py-3 text-xs font-semibold text-[var(--ink-muted)]">
+                  <button
+                    type="button"
+                    className="button-quiet px-2 py-1"
+                    disabled={activeQuestionIndex <= 0}
+                    onClick={() =>
+                      setSelected(questions[activeQuestionIndex - 1])
+                    }
+                  >
+                    Previous
+                  </button>
+                  <span>
+                    Question {activeQuestionIndex + 1} of {questions.length}
+                  </span>
+                  <button
+                    type="button"
+                    className="button-quiet px-2 py-1"
+                    disabled={activeQuestionIndex >= questions.length - 1}
+                    onClick={() =>
+                      setSelected(questions[activeQuestionIndex + 1])
+                    }
+                  >
+                    Next
+                  </button>
+                </div>
+                <div className="mt-4 space-y-2">
+                  {activeEvaluations.map((evaluation: any) => (
+                    <button
+                      key={evaluation.id}
+                      type="button"
+                      onClick={() => setSelected(evaluation)}
+                      className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm ${selected?.id === evaluation.id ? "bg-[var(--brand-soft)] text-[var(--brand-strong)]" : "bg-[var(--surface-muted)]"}`}
+                    >
+                      <span>{evaluation.criterion_title}</span>
+                      <span className="font-mono">
+                        {evaluation.effective_marks}/{evaluation.max_marks}
+                      </span>
+                    </button>
+                  ))}
+                </div>
                 <p className="mt-4 text-sm leading-6 text-[var(--ink-muted)]">
                   {selected.reason}
                 </p>
@@ -266,7 +444,14 @@ export default function SubmissionPage({
                     </p>
                     {answer.uncertainty.length > 0 && (
                       <p className="mt-3 text-xs text-[var(--review)]">
-                        Contains uncertain transcription.
+                        Contains uncertain transcription:{" "}
+                        {answer.uncertainty
+                          .map(
+                            (segment: any) =>
+                              `${segment.text} (${Math.round((segment.confidence ?? 0) * 100)}%)`,
+                          )
+                          .join(", ")}
+                        .
                       </p>
                     )}
                   </div>
