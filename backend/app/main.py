@@ -54,6 +54,7 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS evaluations (id TEXT PRIMARY KEY, submission_id TEXT NOT NULL, criterion_id TEXT NOT NULL, ai_marks REAL NOT NULL, teacher_marks REAL, reason TEXT NOT NULL, evidence TEXT NOT NULL, confidence REAL NOT NULL, needs_review INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS answers (id TEXT PRIMARY KEY, submission_id TEXT NOT NULL, question_id TEXT, transcription TEXT NOT NULL, uncertainty TEXT NOT NULL, prompt_version TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS ai_artifacts (id TEXT PRIMARY KEY, submission_id TEXT NOT NULL, operation TEXT NOT NULL, prompt_version TEXT NOT NULL, image_hash TEXT, output TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS processing_jobs (id TEXT PRIMARY KEY, submission_id TEXT NOT NULL UNIQUE, stage TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT, updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS reviews (id TEXT PRIMARY KEY, evaluation_id TEXT NOT NULL, suggested_marks REAL NOT NULL, reason TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS overrides (id TEXT PRIMARY KEY, evaluation_id TEXT NOT NULL, previous_marks REAL NOT NULL, new_marks REAL NOT NULL, reason TEXT, created_at TEXT NOT NULL);
         """)
@@ -94,6 +95,12 @@ def normalize_pages(original_path: Path, mime_type: str) -> list[dict]:
         image.save(processed_path, "JPEG", quality=settings.processed_image_quality, optimize=True)
         normalized.append({"page_number": page_number, "processed_path": str(processed_path), "width": image.width, "height": image.height, "image_hash": hashlib.sha256(processed_path.read_bytes()).hexdigest()})
     return normalized
+
+
+def set_processing_stage(submission_id: str, stage: str, error: str | None = None, increment_attempts: bool = False) -> None:
+    with connection() as con:
+        con.execute("UPDATE submissions SET status=?, error=? WHERE id=?", (stage, error, submission_id))
+        con.execute("UPDATE processing_jobs SET stage=?, error=?, attempts=attempts + ?, updated_at=? WHERE submission_id=?", (stage, error, int(increment_attempts), now(), submission_id))
 
 
 class CriterionInput(BaseModel):
@@ -198,15 +205,15 @@ def create_exam(payload: ExamInput) -> dict:
 
 async def process_submission(submission_id: str) -> None:
     # The full pipeline is deliberately stateful so every stage is inspectable and retryable.
+    set_processing_stage(submission_id, "preprocessing", increment_attempts=True)
     with connection() as con:
-        con.execute("UPDATE submissions SET status='preprocessing', error=NULL WHERE id=?", (submission_id,))
         pages = con.execute("SELECT * FROM pages WHERE submission_id=?", (submission_id,)).fetchall()
     try:
         # A missing key is recoverable: seeded submissions keep the demo usable offline.
         if not settings.openai_enabled:
             raise RuntimeError("OPENAI_API_KEY is required for live Luna processing. Demo submissions remain available.")
+        set_processing_stage(submission_id, "transcribing")
         with connection() as con:
-            con.execute("UPDATE submissions SET status='transcribing' WHERE id=?", (submission_id,))
             exam_id = con.execute("SELECT exam_id FROM submissions WHERE id=?", (submission_id,)).fetchone()["exam_id"]
             questions = con.execute("SELECT * FROM questions WHERE exam_id=?", (exam_id,)).fetchall()
         with connection() as con:
@@ -226,6 +233,7 @@ async def process_submission(submission_id: str) -> None:
                     match = next((q for q in questions if q["number"] == answer.question_id), None)
                     con.execute("INSERT INTO answers (id, submission_id, question_id, transcription, uncertainty, prompt_version, page_id, confidence, visual_regions, formula_regions) VALUES (?, ?, ?, ?, ?, 'perception_v1', ?, ?, ?, ?)", (str(uuid.uuid4()), submission_id, match["id"] if match else None, answer.transcription, json.dumps([segment.model_dump() for segment in answer.uncertain_segments]), page["id"], answer.confidence, json.dumps([region.model_dump() for region in answer.visual_regions]), json.dumps([region.model_dump() for region in answer.formula_regions])))
             con.execute("UPDATE submissions SET status='grading' WHERE id=?", (submission_id,))
+            con.execute("UPDATE processing_jobs SET stage='grading', updated_at=? WHERE submission_id=?", (now(), submission_id))
         for question in questions:
             with connection() as con:
                 mapped_answers = con.execute("SELECT a.*, p.processed_path, p.original_path, p.mime_type FROM answers a JOIN pages p ON p.id=a.page_id WHERE a.submission_id=? AND a.question_id=? ORDER BY p.page_number", (submission_id, question["id"])).fetchall()
@@ -242,11 +250,10 @@ async def process_submission(submission_id: str) -> None:
                     con.execute("INSERT INTO evaluations VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)", (str(uuid.uuid4()), submission_id, criterion["id"], marks, result.reason, json.dumps(evidence), result.confidence, int(result.needs_review or result.confidence < REVIEW_THRESHOLD or any(json.loads(answer["uncertainty"]) for answer in mapped_answers))))
         with connection() as con:
             needs_review = con.execute("SELECT 1 FROM evaluations WHERE submission_id=? AND needs_review=1", (submission_id,)).fetchone()
-            con.execute("UPDATE submissions SET status=? WHERE id=?", ("review_required" if needs_review else "completed", submission_id))
+        set_processing_stage(submission_id, "review_required" if needs_review else "completed")
         score_submission(submission_id)
     except Exception as exc:
-        with connection() as con:
-            con.execute("UPDATE submissions SET status='failed', error=? WHERE id=?", (str(exc), submission_id))
+        set_processing_stage(submission_id, "failed", str(exc))
 
 
 @asynccontextmanager
@@ -312,6 +319,7 @@ async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, stu
             con.execute("INSERT INTO students VALUES (?, ?, ?)", (student_id, student_name, f"UP-{student_id[:6]}"))
         submission_id = str(uuid.uuid4())
         con.execute("INSERT INTO submissions VALUES (?, ?, ?, 'uploaded', 0, ?, NULL)", (submission_id, exam_id, student_id, now()))
+        con.execute("INSERT INTO processing_jobs VALUES (?, ?, 'uploaded', 0, NULL, ?)", (str(uuid.uuid4()), submission_id, now()))
         for page in pages:
             con.execute("INSERT INTO pages (id, submission_id, page_number, original_path, mime_type, processed_path, width, height, image_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (str(uuid.uuid4()), submission_id, page["page_number"], str(path), file.content_type, page["processed_path"], page["width"], page["height"], page["image_hash"]))
     background_tasks.add_task(process_submission, submission_id)
@@ -340,6 +348,15 @@ async def retry_processing(submission_id: str, background_tasks: BackgroundTasks
         raise HTTPException(409, "Only finished or failed submissions can be retried.")
     background_tasks.add_task(process_submission, submission_id)
     return {"id": submission_id, "status": "queued"}
+
+
+@app.get("/api/submissions/{submission_id}/status")
+def processing_status(submission_id: str):
+    with connection() as con:
+        job = con.execute("SELECT stage, attempts, error, updated_at FROM processing_jobs WHERE submission_id=?", (submission_id,)).fetchone()
+    if not job:
+        raise HTTPException(404, "Processing job not found")
+    return dict(job)
 
 
 @app.get("/api/submissions/{submission_id}")

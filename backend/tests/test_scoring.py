@@ -46,9 +46,12 @@ def test_pdf_upload_creates_a_normalized_record_for_every_page(tmp_path, monkeyp
     submission = asyncio.run(upload_submission(BackgroundTasks(), exam["id"], "Student", file))
     with main.connection() as con:
         pages = con.execute("SELECT processed_path, width, height FROM pages WHERE submission_id=? ORDER BY page_number", (submission["id"],)).fetchall()
+        job = con.execute("SELECT stage, attempts FROM processing_jobs WHERE submission_id=?", (submission["id"],)).fetchone()
     assert len(pages) == 2
     assert all(page["width"] and page["height"] for page in pages)
     assert all(__import__("pathlib").Path(page["processed_path"]).exists() for page in pages)
+    assert job["stage"] == "uploaded"
+    assert job["attempts"] == 0
 
 
 def test_process_endpoint_rejects_unknown_submission():

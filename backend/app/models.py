@@ -166,3 +166,13 @@ class AIArtifact(Base):
     output: Mapped[dict] = mapped_column(JSON)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProcessingJob(Base):
+    __tablename__ = "processing_jobs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    submission_id: Mapped[str] = mapped_column(ForeignKey("submissions.id"), unique=True, index=True)
+    stage: Mapped[SubmissionStatus] = mapped_column(Enum(SubmissionStatus), default=SubmissionStatus.UPLOADED)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
