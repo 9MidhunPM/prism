@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__
 
 import hashlib
 import json
@@ -303,7 +303,8 @@ def decide_review(review_id: str, decision: Literal["accept", "reject"]):
             con.execute("UPDATE evaluations SET teacher_marks=? WHERE id=?", (review["suggested_marks"], review["evaluation_id"]))
             con.execute("INSERT INTO overrides VALUES (?, ?, ?, ?, ?, ?)", (str(uuid.uuid4()), review["evaluation_id"], ev["ai_marks"], review["suggested_marks"], "Accepted AI review suggestion", now()))
             submission = con.execute("SELECT submission_id FROM evaluations WHERE id=?", (review["evaluation_id"],)).fetchone()
-            score_submission(submission["submission_id"])
+            total = con.execute("SELECT SUM(COALESCE(teacher_marks, ai_marks)) AS total FROM evaluations WHERE submission_id=?", (submission["submission_id"],)).fetchone()["total"]
+            con.execute("UPDATE submissions SET total_score=? WHERE id=?", (total or 0, submission["submission_id"]))
         con.execute("UPDATE reviews SET status=? WHERE id=?", (decision, review_id))
     return {"status": decision}
 
