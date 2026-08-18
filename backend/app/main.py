@@ -315,12 +315,15 @@ def get_submission(submission_id: str):
         submission = con.execute("""SELECT s.*, st.name student_name, e.title exam_title, e.id exam_id FROM submissions s JOIN students st ON st.id=s.student_id JOIN exams e ON e.id=s.exam_id WHERE s.id=?""", (submission_id,)).fetchone()
         if not submission:
             raise HTTPException(404, "Submission not found")
-        pages = [dict(row) for row in con.execute("SELECT id, page_number, width, height FROM pages WHERE submission_id=?", (submission_id,))]
-        evaluations = [dict(row) for row in con.execute("""SELECT ev.*, c.title criterion_title, c.description criterion_description, c.max_marks, c.concept, q.number question_number, q.text question_text FROM evaluations ev JOIN criteria c ON c.id=ev.criterion_id JOIN questions q ON q.id=c.question_id WHERE ev.submission_id=? ORDER BY q.number""", (submission_id,))]
+        pages = [{**dict(row), "url": f"/api/pages/{row['id']}"} for row in con.execute("SELECT id, page_number, width, height FROM pages WHERE submission_id=?", (submission_id,))]
+        answers = [dict(row) for row in con.execute("SELECT id, question_id, page_id, transcription, uncertainty, prompt_version FROM answers WHERE submission_id=?", (submission_id,))]
+        for answer in answers:
+            answer["uncertainty"] = json.loads(answer["uncertainty"])
+        evaluations = [dict(row) for row in con.execute("""SELECT ev.*, c.title criterion_title, c.description criterion_description, c.max_marks, c.concept, q.id question_id, q.number question_number, q.text question_text FROM evaluations ev JOIN criteria c ON c.id=ev.criterion_id JOIN questions q ON q.id=c.question_id WHERE ev.submission_id=? ORDER BY q.number""", (submission_id,))]
         for item in evaluations:
             item["evidence"] = json.loads(item["evidence"])
             item["effective_marks"] = item["teacher_marks"] if item["teacher_marks"] is not None else item["ai_marks"]
-    return {**dict(submission), "pages": pages, "evaluations": evaluations}
+    return {**dict(submission), "pages": pages, "answers": answers, "evaluations": evaluations}
 
 
 @app.get("/api/pages/{page_id}")
