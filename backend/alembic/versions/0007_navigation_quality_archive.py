@@ -17,7 +17,7 @@ def upgrade() -> None:
     op.add_column("submission_pages", sa.Column("quality_reason", sa.Text(), nullable=True))
     op.add_column("submission_pages", sa.Column("quality_confidence", sa.Float(), nullable=True))
     if op.get_bind().dialect.name == "postgresql":
-        op.execute("ALTER TYPE submissionstatus ADD VALUE IF NOT EXISTS 'rescan_required'")
+        op.execute("ALTER TYPE submissionstatus ADD VALUE IF NOT EXISTS 'RESCAN_REQUIRED'")
 
 
 def downgrade() -> None:

@@ -351,11 +351,11 @@ async def process_submission(submission_id: str) -> None:
             perception = PerceptionResult.model_validate(artifact.output) if artifact else await perceive_page(source_key, source_mime, [q.number for q in questions])
             with session() as db:
                 stored_page = db.get(SubmissionPage, page.id)
+                # A legible page may still have uncertain words or a partial answer.
+                # Only halt grading when perception explicitly says the page is unusable.
                 unreadable = (
                     perception.requires_rescan
-                    or perception.quality_status in {"blurry", "unreadable"}
-                    or not perception.answers
-                    or any("[ILLEGIBLE]" in answer.transcription or answer.confidence < 0.5 for answer in perception.answers)
+                    or perception.quality_status == "unreadable"
                 )
                 stored_page.quality_status = "rescan_required" if unreadable else perception.quality_status
                 stored_page.quality_reason = perception.quality_reason or ("No reliable handwritten answers could be read from this page." if not perception.answers else None)
@@ -373,7 +373,9 @@ async def process_submission(submission_id: str) -> None:
                         db.add(EvidenceRegion(answer_id=answer.id, page_id=page.id, kind="formula", text=region.description, bbox={"coordinates": region.bbox}))
                 db.commit()
             if unreadable:
-                set_processing_stage(submission_id, SubmissionStatus.RESCAN_REQUIRED, "A page is too unclear to grade reliably. Replace the affected scan and retry.")
+                # Keep the submission in an existing persisted state. Page-level
+                # quality carries the rescan requirement without a DB enum migration.
+                set_processing_stage(submission_id, SubmissionStatus.REVIEW_REQUIRED, "A page is too unclear to grade reliably. Replace the affected scan and retry.")
                 return
         set_processing_stage(submission_id, SubmissionStatus.GRADING)
         for question in questions:

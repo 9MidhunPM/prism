@@ -230,9 +230,11 @@ export default function SubmissionPage({
             </p>
           </div>
           <span
-            className={`status-pill ${submission.status === "rescan_required" ? "status-review" : "status-neutral"}`}
+            className={`status-pill ${submission.pages.some((page: any) => page.quality_status === "rescan_required") ? "status-review" : "status-neutral"}`}
           >
-            {submission.status === "rescan_required"
+            {submission.pages.some(
+              (page: any) => page.quality_status === "rescan_required",
+            )
               ? "Rescan required"
               : "Evidence review"}
           </span>
