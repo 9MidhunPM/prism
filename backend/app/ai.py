@@ -26,8 +26,22 @@ def client() -> AsyncOpenAI:
 class PerceivedAnswer(BaseModel):
     question_id: str
     transcription: str
-    uncertain_segments: list[str] = []
-    visual_notes: list[str] = []
+    confidence: float = Field(ge=0, le=1)
+    uncertain_segments: list["UncertainSegment"] = []
+    visual_regions: list["VisualRegion"] = []
+    formula_regions: list["VisualRegion"] = []
+
+
+class UncertainSegment(BaseModel):
+    text: str
+    alternatives: list[str] = []
+    confidence: float = Field(ge=0, le=1)
+
+
+class VisualRegion(BaseModel):
+    kind: str
+    description: str
+    bbox: list[float] | None = None
 
 
 class PerceptionResult(BaseModel):
@@ -66,7 +80,7 @@ async def perceive_page(path: str, mime_type: str, question_numbers: list[str]) 
     prompt = f"""You are PRISM's document perception operation ({PERCEPTION_VERSION}).
 Transcribe only what is visibly handwritten. Map it to these expected question identifiers when visible: {question_numbers}.
 Preserve spelling, grammar, incorrect statements and incorrect formulas exactly. Never solve, improve, or correct the exam. Never infer invisible content.
-Use [ILLEGIBLE] for unreadable text and [UNCERTAIN: option A | option B] for ambiguity. Note visible diagrams or equations without interpreting their correctness."""
+Use [ILLEGIBLE] for unreadable text and [UNCERTAIN: option A | option B] for ambiguity. For every uncertain segment, return the exact text, alternatives, and confidence. Record visibly present diagrams, tables, graphs, and formulas as visual/formula regions without judging correctness. Bounding boxes, when visible, are normalized [left, top, right, bottom] values from 0 to 1."""
     response = await openai_client.responses.parse(model=MODEL, input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=PerceptionResult)
     return response.output_parsed
 

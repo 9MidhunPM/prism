@@ -62,8 +62,9 @@ def init_db() -> None:
             if name not in columns:
                 con.execute(f"ALTER TABLE pages ADD COLUMN {name} {definition}")
         answer_columns = {row["name"] for row in con.execute("PRAGMA table_info(answers)")}
-        if "page_id" not in answer_columns:
-            con.execute("ALTER TABLE answers ADD COLUMN page_id TEXT")
+        for name, definition in {"page_id": "TEXT", "confidence": "REAL", "visual_regions": "TEXT", "formula_regions": "TEXT"}.items():
+            if name not in answer_columns:
+                con.execute(f"ALTER TABLE answers ADD COLUMN {name} {definition}")
 
 
 def normalize_pages(original_path: Path, mime_type: str) -> list[dict]:
@@ -223,7 +224,7 @@ async def process_submission(submission_id: str) -> None:
                     con.execute("INSERT INTO ai_artifacts VALUES (?, ?, 'perception', 'perception_v1', ?, ?, ?)", (str(uuid.uuid4()), submission_id, image_hash, perception.model_dump_json(), now()))
                 for answer in perception.answers:
                     match = next((q for q in questions if q["number"] == answer.question_id), None)
-                    con.execute("INSERT INTO answers (id, submission_id, question_id, transcription, uncertainty, prompt_version, page_id) VALUES (?, ?, ?, ?, ?, 'perception_v1', ?)", (str(uuid.uuid4()), submission_id, match["id"] if match else None, answer.transcription, json.dumps(answer.uncertain_segments), page["id"]))
+                    con.execute("INSERT INTO answers (id, submission_id, question_id, transcription, uncertainty, prompt_version, page_id, confidence, visual_regions, formula_regions) VALUES (?, ?, ?, ?, ?, 'perception_v1', ?, ?, ?, ?)", (str(uuid.uuid4()), submission_id, match["id"] if match else None, answer.transcription, json.dumps([segment.model_dump() for segment in answer.uncertain_segments]), page["id"], answer.confidence, json.dumps([region.model_dump() for region in answer.visual_regions]), json.dumps([region.model_dump() for region in answer.formula_regions])))
             con.execute("UPDATE submissions SET status='grading' WHERE id=?", (submission_id,))
         for question in questions:
             with connection() as con:
@@ -324,9 +325,11 @@ def get_submission(submission_id: str):
         if not submission:
             raise HTTPException(404, "Submission not found")
         pages = [{**dict(row), "url": f"/api/pages/{row['id']}"} for row in con.execute("SELECT id, page_number, width, height FROM pages WHERE submission_id=?", (submission_id,))]
-        answers = [dict(row) for row in con.execute("SELECT id, question_id, page_id, transcription, uncertainty, prompt_version FROM answers WHERE submission_id=?", (submission_id,))]
+        answers = [dict(row) for row in con.execute("SELECT id, question_id, page_id, transcription, uncertainty, prompt_version, confidence, visual_regions, formula_regions FROM answers WHERE submission_id=?", (submission_id,))]
         for answer in answers:
             answer["uncertainty"] = json.loads(answer["uncertainty"])
+            answer["visual_regions"] = json.loads(answer["visual_regions"] or "[]")
+            answer["formula_regions"] = json.loads(answer["formula_regions"] or "[]")
         evaluations = [dict(row) for row in con.execute("""SELECT ev.*, c.title criterion_title, c.description criterion_description, c.max_marks, c.concept, q.id question_id, q.number question_number, q.text question_text FROM evaluations ev JOIN criteria c ON c.id=ev.criterion_id JOIN questions q ON q.id=c.question_id WHERE ev.submission_id=? ORDER BY q.number""", (submission_id,))]
         for item in evaluations:
             item["evidence"] = json.loads(item["evidence"])
