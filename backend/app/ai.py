@@ -17,6 +17,12 @@ STUDENT_PROFILE_VERSION = "student_profile_v1"
 CLASS_ANALYSIS_VERSION = "class_analysis_v1"
 
 
+def client() -> AsyncOpenAI:
+    if not settings.openai_enabled:
+        raise RuntimeError("OPENAI_API_KEY is required for Luna operations.")
+    return AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value(), max_retries=settings.openai_max_retries, timeout=settings.openai_timeout_seconds)
+
+
 class PerceivedAnswer(BaseModel):
     question_id: str
     transcription: str
@@ -56,29 +62,29 @@ def image_content(path: str, mime_type: str) -> dict:
 
 
 async def perceive_page(path: str, mime_type: str, question_numbers: list[str]) -> PerceptionResult:
-    client = AsyncOpenAI(max_retries=settings.openai_max_retries, timeout=settings.openai_timeout_seconds)
+    openai_client = client()
     prompt = f"""You are PRISM's document perception operation ({PERCEPTION_VERSION}).
 Transcribe only what is visibly handwritten. Map it to these expected question identifiers when visible: {question_numbers}.
 Preserve spelling, grammar, incorrect statements and incorrect formulas exactly. Never solve, improve, or correct the exam. Never infer invisible content.
 Use [ILLEGIBLE] for unreadable text and [UNCERTAIN: option A | option B] for ambiguity. Note visible diagrams or equations without interpreting their correctness."""
-    response = await client.responses.parse(model=MODEL, input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=PerceptionResult)
+    response = await openai_client.responses.parse(model=MODEL, input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=PerceptionResult)
     return response.output_parsed
 
 
 async def grade_criterion(path: str, mime_type: str, question: str, criterion: dict, transcription: str) -> GradeResult:
-    client = AsyncOpenAI(max_retries=settings.openai_max_retries, timeout=settings.openai_timeout_seconds)
+    openai_client = client()
     prompt = f"""You are PRISM's rubric grading operation ({GRADING_VERSION}). Grade only this one criterion.
 Question: {question}
 Criterion: {criterion['title']} - {criterion['description']}
 Maximum marks: {criterion['max_marks']}
 Student transcription: {transcription}
 Use the image as ground evidence. Award a score between zero and the maximum, quote evidence exactly, and flag uncertainty. Do not calculate totals."""
-    response = await client.responses.parse(model=MODEL, input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=GradeResult)
+    response = await openai_client.responses.parse(model=MODEL, input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=GradeResult)
     return response.output_parsed
 
 
 async def review_criterion(path: str, mime_type: str, question: str, criterion: dict, transcription: str, current_marks: float, current_reason: str, teacher_comment: str) -> ReviewResult:
-    client = AsyncOpenAI(max_retries=settings.openai_max_retries, timeout=settings.openai_timeout_seconds)
+    openai_client = client()
     prompt = f"""You are PRISM's teacher review operation ({REVIEW_VERSION}). Re-evaluate only this criterion.
 Question: {question}
 Criterion: {criterion['title']} - {criterion['description']}
@@ -88,5 +94,5 @@ Current suggested marks: {current_marks}
 Current reason: {current_reason}
 Teacher comment: {teacher_comment}
 Use the original image as ground evidence. Return a suggested score between zero and the maximum, concise evidence-backed reasoning, and exact evidence quotes. Do not calculate totals and do not change any stored score."""
-    response = await client.responses.parse(model=MODEL, input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=ReviewResult)
+    response = await openai_client.responses.parse(model=MODEL, input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=ReviewResult)
     return response.output_parsed

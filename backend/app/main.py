@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse
 import fitz
 from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
-from .ai import grade_criterion, perceive_page, review_criterion
+from .ai import PerceptionResult, grade_criterion, perceive_page, review_criterion
 from .settings import get_settings
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -214,9 +214,13 @@ async def process_submission(submission_id: str) -> None:
         for page in pages:
             source_path = page["processed_path"] or page["original_path"]
             source_mime = "image/jpeg" if page["processed_path"] else page["mime_type"]
-            perception = await perceive_page(source_path, source_mime, [q["number"] for q in questions])
+            image_hash = page["image_hash"] or hashlib.sha256(Path(source_path).read_bytes()).hexdigest()
             with connection() as con:
-                con.execute("INSERT INTO ai_artifacts VALUES (?, ?, 'perception', 'perception_v1', ?, ?, ?)", (str(uuid.uuid4()), submission_id, page["image_hash"] or hashlib.sha256(Path(source_path).read_bytes()).hexdigest(), perception.model_dump_json(), now()))
+                cached = con.execute("SELECT output FROM ai_artifacts WHERE operation='perception' AND prompt_version='perception_v1' AND image_hash=? ORDER BY created_at DESC LIMIT 1", (image_hash,)).fetchone()
+            perception = PerceptionResult.model_validate_json(cached["output"]) if cached else await perceive_page(source_path, source_mime, [q["number"] for q in questions])
+            with connection() as con:
+                if not cached:
+                    con.execute("INSERT INTO ai_artifacts VALUES (?, ?, 'perception', 'perception_v1', ?, ?, ?)", (str(uuid.uuid4()), submission_id, image_hash, perception.model_dump_json(), now()))
                 for answer in perception.answers:
                     match = next((q for q in questions if q["number"] == answer.question_id), None)
                     con.execute("INSERT INTO answers (id, submission_id, question_id, transcription, uncertainty, prompt_version, page_id) VALUES (?, ?, ?, ?, ?, 'perception_v1', ?)", (str(uuid.uuid4()), submission_id, match["id"] if match else None, answer.transcription, json.dumps(answer.uncertain_segments), page["id"]))
