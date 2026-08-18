@@ -36,7 +36,10 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/prism.db"
 
     openai_api_key: SecretStr | None = None
-    openai_model: Literal["gpt-5.6-luna"] = "gpt-5.6-luna"
+    openai_model: str = "gpt-5.6-luna"
+    luna_model: str = "gpt-5.6-luna"
+    gpt4o_model: str = "gpt-4o"
+    gpt4o_mini_model: str = "gpt-4o-mini"
     openai_timeout_seconds: int = Field(default=90, ge=10, le=300)
     openai_max_retries: int = Field(default=2, ge=0, le=5)
     ai_concurrency: int = Field(default=3, ge=1, le=4)

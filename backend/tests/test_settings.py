@@ -1,12 +1,11 @@
 import pytest
-from pydantic import ValidationError
 
 from app.settings import Settings
 
 
-def test_only_luna_is_accepted_as_the_runtime_model():
-    with pytest.raises(ValidationError):
-        Settings(openai_model="gpt-4.1")
+def test_runtime_model_router_allows_configured_openai_models():
+    settings = Settings(luna_model="gpt-5.6-luna", gpt4o_model="gpt-4o", gpt4o_mini_model="gpt-4o-mini")
+    assert settings.gpt4o_mini_model == "gpt-4o-mini"
 
 
 def test_production_requires_a_secure_session_and_postgres():

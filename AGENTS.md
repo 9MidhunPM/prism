@@ -41,10 +41,12 @@ choose B.
 
 # 2. Runtime AI Model
 
-The application uses ONLY:
+The application uses these OpenAI runtime models:
 
 ```text
 gpt-5.6-luna
+gpt-4o
+gpt-4o-mini
 ```
 
 through the OpenAI API.
@@ -53,7 +55,6 @@ Do NOT introduce runtime calls to:
 
 - GPT-5.6 Terra
 - GPT-5.6 Sol
-- GPT-4.x
 - Gemini
 - Claude
 - Qianfan

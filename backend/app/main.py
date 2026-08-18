@@ -18,7 +18,7 @@ from sqlalchemy import func, select, text
 
 from . import database
 from .ai import (EXAM_IMPORT_VERSION, PerceptionResult, answer_teacher_question,
-                 grade_criterion, import_exam_pages, perceive_page, review_criterion)
+                 grade_criterion, import_exam_pages, model_for, perceive_page, review_criterion)
 from .auth import create_session, hash_password, read_session_data, verify_password
 from .demo import seed_demo_accounts
 from .models import (AIArtifact, Account, AccountRole, Answer, ClassCohort, CriterionEvaluation, EvaluationEvidence, Exam,
@@ -267,7 +267,7 @@ async def process_submission(submission_id: str) -> None:
             if not submission:
                 return
             pages = db.scalars(select(SubmissionPage).where(SubmissionPage.submission_id == submission_id).order_by(SubmissionPage.page_number)).all()
-            questions = db.scalars(select(Question).where(Question.exam_id == submission.exam_id)).all()
+            questions = db.scalars(select(Question).where(Question.exam_id == submission.exam_id).order_by(Question.number)).all()
             old_evaluations = db.scalars(select(CriterionEvaluation).join(Answer).where(Answer.submission_id == submission_id)).all()
             for evaluation in old_evaluations:
                 for evidence in db.scalars(select(EvaluationEvidence).where(EvaluationEvidence.evaluation_id == evaluation.id)):
@@ -286,7 +286,7 @@ async def process_submission(submission_id: str) -> None:
             perception = PerceptionResult.model_validate(artifact.output) if artifact else await perceive_page(source_key, source_mime, [q.number for q in questions])
             with session() as db:
                 if not artifact:
-                    db.add(AIArtifact(submission_id=submission_id, operation="perception", model=MODEL, prompt_version="perception_v1", input_hash=image_hash, output=perception.model_dump()))
+                    db.add(AIArtifact(submission_id=submission_id, operation="perception", model=model_for("perception"), prompt_version="perception_v1", input_hash=image_hash, output=perception.model_dump()))
                 for result_answer in perception.answers:
                     matched_question = next((q for q in questions if q.number == result_answer.question_id), None)
                     answer = Answer(submission_id=submission_id, question_id=matched_question.id if matched_question else None, page_id=page.id, transcription=result_answer.transcription, confidence=result_answer.confidence, uncertainty=[segment.model_dump() for segment in result_answer.uncertain_segments], prompt_version="perception_v1")
@@ -300,8 +300,8 @@ async def process_submission(submission_id: str) -> None:
         set_processing_stage(submission_id, SubmissionStatus.GRADING)
         for question in questions:
             with session() as db:
-                mapped_answers = db.scalars(select(Answer).where(Answer.submission_id == submission_id, Answer.question_id == question.id)).all()
-                criteria = db.scalars(select(RubricCriterion).where(RubricCriterion.question_id == question.id)).all()
+                mapped_answers = db.scalars(select(Answer).join(SubmissionPage).where(Answer.submission_id == submission_id, Answer.question_id == question.id).order_by(SubmissionPage.page_number, Answer.id)).all()
+                criteria = db.scalars(select(RubricCriterion).where(RubricCriterion.question_id == question.id).order_by(RubricCriterion.code)).all()
                 page = db.get(SubmissionPage, mapped_answers[0].page_id) if mapped_answers else None
             if not mapped_answers or not page:
                 continue
@@ -432,7 +432,7 @@ async def import_exam_draft(file: UploadFile = File(...), teacher: dict = Depend
     with session() as db:
         db.add(AIArtifact(
             operation="exam_import",
-            model=MODEL,
+            model=model_for("exam_import"),
             prompt_version=EXAM_IMPORT_VERSION,
             input_hash=image_hash,
             output=draft,
@@ -452,26 +452,47 @@ def get_exam(exam_id: str, teacher: dict = Depends(current_teacher)): return exa
 
 
 @app.post("/api/exams/{exam_id}/submissions")
-async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, student_name: str = Form(...), file: UploadFile = File(...), teacher: dict = Depends(current_teacher)):
-    if file.content_type not in ALLOWED_TYPES: raise HTTPException(415, "Upload a JPEG, PNG, or PDF file.")
-    contents = await file.read()
-    if len(contents) > settings.max_upload_mb * 1024 * 1024: raise HTTPException(413, f"Files must be smaller than {settings.max_upload_mb} MB.")
-    if not contents: raise HTTPException(400, "The uploaded file is empty.")
+async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, student_name: str = Form(...), file: UploadFile | None = File(None), pages: list[UploadFile] | None = File(None), teacher: dict = Depends(current_teacher)):
+    uploads = pages if isinstance(pages, list) else ([file] if isinstance(file, UploadFile) else [])
+    if not uploads:
+        raise HTTPException(422, "Upload one PDF or at least one image page.")
+    if len(uploads) > settings.max_submission_pages:
+        raise HTTPException(422, f"Submissions may contain up to {settings.max_submission_pages} pages.")
+    if any(upload.content_type not in ALLOWED_TYPES for upload in uploads):
+        raise HTTPException(415, "Upload JPEG, PNG, or PDF files only.")
+    if len(uploads) > 1 and any(upload.content_type == "application/pdf" for upload in uploads):
+        raise HTTPException(422, "Upload one PDF or ordered image pages, not both.")
+    payloads = [(upload, await upload.read()) for upload in uploads]
+    if any(not contents for _, contents in payloads):
+        raise HTTPException(400, "An uploaded page is empty.")
+    if sum(len(contents) for _, contents in payloads) > settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(413, f"All pages together must be smaller than {settings.max_upload_mb} MB.")
     with session() as db: owned_exam(db, exam_id, teacher["id"])
-    extension = {"image/jpeg": ".jpg", "image/png": ".png", "application/pdf": ".pdf"}[file.content_type]
-    path = UPLOADS / f"{uuid.uuid4()}{extension}"; path.write_bytes(contents)
-    pages = normalize_pages(path, file.content_type)
+    source_hash = hashlib.sha256(b"".join(hashlib.sha256(contents).digest() for _, contents in payloads)).hexdigest()
+    normalized_pages: list[dict] = []
+    for upload, contents in payloads:
+        extension = {"image/jpeg": ".jpg", "image/png": ".png", "application/pdf": ".pdf"}[upload.content_type]
+        path = UPLOADS / f"{uuid.uuid4()}{extension}"
+        path.write_bytes(contents)
+        for page in normalize_pages(path, upload.content_type):
+            normalized_pages.append({**page, "original_key": str(path), "mime_type": upload.content_type})
+    if len(normalized_pages) > settings.max_submission_pages:
+        raise HTTPException(422, f"Submissions may contain up to {settings.max_submission_pages} pages.")
     with session() as db:
         cohort = unassigned_class(db, teacher["id"])
         student = db.scalar(select(Student).where(Student.class_id == cohort.id, Student.name == student_name))
         if not student:
             student = Student(class_id=cohort.id, name=student_name, identifier=f"UP-{uuid.uuid4().hex[:6]}"); db.add(student); db.flush()
-        submission = Submission(exam_id=exam_id, student_id=student.id, status=SubmissionStatus.UPLOADED)
+        duplicate = db.scalar(select(Submission).where(Submission.exam_id == exam_id, Submission.student_id == student.id, Submission.source_hash == source_hash).order_by(Submission.created_at.desc()))
+        if duplicate:
+            return {"id": duplicate.id, "status": duplicate.status.value, "student_name": student_name, "page_count": db.scalar(select(func.count()).select_from(SubmissionPage).where(SubmissionPage.submission_id == duplicate.id)), "duplicate": True}
+        submission = Submission(exam_id=exam_id, student_id=student.id, status=SubmissionStatus.UPLOADED, source_hash=source_hash)
         db.add(submission); db.flush(); db.add(ProcessingJob(submission_id=submission.id, stage=SubmissionStatus.UPLOADED))
-        for page in pages: db.add(SubmissionPage(submission_id=submission.id, page_number=page["page_number"], original_key=str(path), mime_type=file.content_type, **{key: page[key] for key in ("processed_key", "width", "height", "image_hash")}))
+        for page_number, page in enumerate(normalized_pages, 1):
+            db.add(SubmissionPage(submission_id=submission.id, page_number=page_number, original_key=page["original_key"], mime_type=page["mime_type"], **{key: page[key] for key in ("processed_key", "width", "height", "image_hash")}))
         db.commit(); submission_id = submission.id
     background_tasks.add_task(process_submission, submission_id)
-    return {"id": submission_id, "status": "uploaded", "student_name": student_name, "page_count": len(pages)}
+    return {"id": submission_id, "status": "uploaded", "student_name": student_name, "page_count": len(normalized_pages), "duplicate": False}
 
 
 @app.post("/api/submissions/{submission_id}/process")
@@ -502,7 +523,7 @@ def processing_status(submission_id: str, teacher: dict = Depends(current_teache
 def get_submission(submission_id: str, teacher: dict = Depends(current_teacher)):
     with session() as db:
         submission = owned_submission(db, submission_id, teacher["id"]); student = db.get(Student, submission.student_id); exam = db.get(Exam, submission.exam_id)
-        pages = [{"id": p.id, "page_number": p.page_number, "width": p.width, "height": p.height, "url": f"/api/pages/{p.id}"} for p in db.scalars(select(SubmissionPage).where(SubmissionPage.submission_id == submission_id))]
+        pages = [{"id": p.id, "page_number": p.page_number, "width": p.width, "height": p.height, "url": f"/api/pages/{p.id}"} for p in db.scalars(select(SubmissionPage).where(SubmissionPage.submission_id == submission_id).order_by(SubmissionPage.page_number))]
         answers = []
         for answer in db.scalars(select(Answer).where(Answer.submission_id == submission_id)):
             regions = db.scalars(select(EvidenceRegion).where(EvidenceRegion.answer_id == answer.id)).all()

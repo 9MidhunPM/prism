@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from .settings import get_settings
 
 settings = get_settings()
-MODEL = settings.openai_model
+MODEL = settings.luna_model
 PERCEPTION_VERSION = "perception_v1"
 GRADING_VERSION = "grading_v1"
 REVIEW_VERSION = "review_v1"
@@ -18,6 +18,15 @@ STUDENT_PROFILE_VERSION = "student_profile_v1"
 CLASS_ANALYSIS_VERSION = "class_analysis_v1"
 TEACHER_CHAT_VERSION = "teacher_chat_v1"
 EXAM_IMPORT_VERSION = "exam_import_v1"
+
+
+def model_for(operation: str) -> str:
+    """Keep model choice explicit and stable for reproducible artifact keys."""
+    if operation in {"perception", "grading"}:
+        return settings.luna_model
+    if operation in {"review", "exam_import"}:
+        return settings.gpt4o_model
+    return settings.gpt4o_mini_model
 
 
 def client() -> AsyncOpenAI:
@@ -111,7 +120,7 @@ async def perceive_page(path: str, mime_type: str, question_numbers: list[str]) 
 Transcribe only what is visibly handwritten. Map it to these expected question identifiers when visible: {question_numbers}.
 Preserve spelling, grammar, incorrect statements and incorrect formulas exactly. Never solve, improve, or correct the exam. Never infer invisible content.
 Use [ILLEGIBLE] for unreadable text and [UNCERTAIN: option A | option B] for ambiguity. For every uncertain segment, return the exact text, alternatives, and confidence. Record visibly present diagrams, tables, graphs, and formulas as visual/formula regions without judging correctness. Bounding boxes, when visible, are normalized [left, top, right, bottom] values from 0 to 1."""
-    response = await openai_client.responses.parse(model=MODEL, input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=PerceptionResult)
+    response = await openai_client.responses.parse(model=model_for("perception"), input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=PerceptionResult)
     return response.output_parsed
 
 
@@ -123,7 +132,7 @@ Criterion: {criterion['title']} - {criterion['description']}
 Maximum marks: {criterion['max_marks']}
 Student transcription: {transcription}
 Use the image as ground evidence. Award a score between zero and the maximum, quote evidence exactly, and flag uncertainty. Do not calculate totals."""
-    response = await openai_client.responses.parse(model=MODEL, input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=GradeResult)
+    response = await openai_client.responses.parse(model=model_for("grading"), input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=GradeResult)
     return response.output_parsed
 
 
@@ -138,7 +147,7 @@ Current suggested marks: {current_marks}
 Current reason: {current_reason}
 Teacher comment: {teacher_comment}
 Use the original image as ground evidence. Return a suggested score between zero and the maximum, concise evidence-backed reasoning, and exact evidence quotes. Do not calculate totals and do not change any stored score."""
-    response = await openai_client.responses.parse(model=MODEL, input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=ReviewResult)
+    response = await openai_client.responses.parse(model=model_for("review"), input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=ReviewResult)
     return response.output_parsed
 
 
@@ -150,7 +159,7 @@ Teacher question: {question}
 Class statistics: {json.dumps(concept_statistics)}
 Return the names of the statistics you used in sources."""
     response = await openai_client.responses.parse(
-        model=MODEL,
+        model=model_for("teacher_chat"),
         input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
         text_format=TeacherAnswer,
     )
@@ -165,7 +174,7 @@ Suggest concise rubric criteria that a teacher must review before saving. Each c
     content = [{"type": "input_text", "text": prompt}]
     content.extend(image_content(path, mime_type) for path, mime_type in pages)
     response = await openai_client.responses.parse(
-        model=MODEL,
+        model=model_for("exam_import"),
         input=[{"role": "user", "content": content}],
         text_format=ExamImportResult,
     )
