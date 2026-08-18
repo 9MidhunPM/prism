@@ -132,7 +132,7 @@ export default function Home() {
             tone="review"
           />
         </div>
-        <div className="mb-7 grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(19rem,.7fr)]">
+        <div className="mb-7 grid items-start gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(19rem,.7fr)]">
           <section className="surface-lined overflow-hidden">
             <div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4">
               <h2 className="font-serif text-2xl font-semibold">
@@ -184,9 +184,14 @@ export default function Home() {
                   Concept patterns will appear after PRISM evaluates papers.
                 </p>
               )}
+              {!data && (
+                <p className="p-5 text-sm text-[var(--ink-muted)]">
+                  Loading concept evidence...
+                </p>
+              )}
             </div>
           </section>
-          <section className="surface bg-[var(--brand)] p-5 text-white">
+          <section className="surface self-start bg-[var(--brand)] p-5 text-white">
             <p className="font-serif text-4xl font-semibold">
               {metrics ? metrics.active_exams : "-"}
             </p>

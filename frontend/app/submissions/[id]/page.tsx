@@ -310,15 +310,20 @@ export default function SubmissionPage({
                 No original paper is attached to this cached submission.
               </p>
             )}
-            {submission.pages[activePage]?.quality_status ===
-              "rescan_required" && (
+            {(submission.pages[activePage]?.quality_status ===
+              "rescan_required" ||
+              !submission.pages[activePage]?.original_available) && (
               <div className="border-t border-[var(--line)] bg-[var(--review-soft)] p-4">
                 <p className="text-sm font-semibold text-[var(--review)]">
-                  Rescan required
+                  {submission.pages[activePage]?.original_available
+                    ? "Rescan required"
+                    : "Original scan unavailable"}
                 </p>
                 <p className="mt-1 text-sm text-[var(--review)]">
-                  {submission.pages[activePage]?.quality_reason ??
-                    "This page is too unclear to grade responsibly."}
+                  {submission.pages[activePage]?.original_available
+                    ? (submission.pages[activePage]?.quality_reason ??
+                      "This page is too unclear to grade responsibly.")
+                    : "This scan was not retained after a previous deployment. Upload a replacement page to restore the original evidence."}
                 </p>
                 <label className="button-secondary mt-3 cursor-pointer">
                   <span>{saving ? "Uploading..." : "Replace this page"}</span>

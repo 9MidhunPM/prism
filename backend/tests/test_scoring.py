@@ -6,7 +6,7 @@ import fitz
 from fastapi import BackgroundTasks, HTTPException, UploadFile
 from starlette.datastructures import Headers
 
-from app.main import complete_review, create_exam, delete_exam, perception_input_hash, question_material, recalculate_submission_state, resolve_question, ExamInput, QuestionInput, CriterionInput, start_processing, upload_submission
+from app.main import complete_review, create_exam, delete_exam, page_source, perception_input_hash, question_material, recalculate_submission_state, resolve_question, ExamInput, QuestionInput, CriterionInput, start_processing, upload_submission
 from app.models import (AIArtifact, Answer, ClassCohort, CriterionEvaluation,
                         EvaluationEvidence, EvidenceRegion, Exam, ProcessingJob,
                         Question, ReviewSuggestion, RubricCriterion, Student,
@@ -55,8 +55,25 @@ def test_pdf_upload_creates_a_normalized_record_for_every_page(isolated_database
     assert len(pages) == 2
     assert all(page.width and page.height for page in pages)
     assert all(__import__("pathlib").Path(page.processed_key).exists() for page in pages)
+    assert all(page.original_data and page.processed_data for page in pages)
     assert job.stage.value == "uploaded"
     assert job.attempts == 0
+
+
+def test_durable_processed_media_restores_a_missing_local_cache(isolated_database):
+    teacher = teacher_id()
+    exam = exam_for(teacher)
+    document = fitz.open()
+    document.new_page()
+    file = UploadFile(filename="paper.pdf", file=io.BytesIO(document.tobytes()), headers=Headers({"content-type": "application/pdf"}))
+    submission = asyncio.run(upload_submission(BackgroundTasks(), exam["id"], "Student", file, teacher={"id": teacher}))
+    with database.SessionLocal() as db:
+        page = db.query(SubmissionPage).filter_by(submission_id=submission["id"]).one()
+        original_path = __import__("pathlib").Path(page.processed_key)
+        original_path.unlink()
+        restored, mime_type = page_source(page)
+        assert mime_type == "image/jpeg"
+        assert __import__("pathlib").Path(restored).read_bytes() == page.processed_data
 
 
 def test_process_endpoint_rejects_unknown_submission(isolated_database):
@@ -73,7 +90,7 @@ def evaluation_tree(teacher: str, exam_id: str, stage: SubmissionStatus = Submis
         db.add(student); db.flush()
         submission = Submission(exam_id=exam_id, student_id=student.id, status=stage)
         db.add(submission); db.flush()
-        page = SubmissionPage(submission_id=submission.id, page_number=1, original_key="/tmp/paper.jpg", mime_type="image/jpeg")
+        page = SubmissionPage(submission_id=submission.id, page_number=1, original_key="/tmp/paper.jpg", mime_type="image/jpeg", original_data=b"original", processed_data=b"processed")
         db.add(page); db.flush()
         question = db.query(Question).filter_by(exam_id=exam_id).one()
         criterion = db.query(RubricCriterion).filter_by(question_id=question.id).one()
@@ -167,7 +184,7 @@ def test_question_material_keeps_page_fragments_in_order(isolated_database):
     with database.SessionLocal() as db:
         first = db.query(Answer).filter_by(submission_id=submission_id).one()
         question = db.get(Question, first.question_id)
-        page = SubmissionPage(submission_id=submission_id, page_number=2, original_key="/tmp/paper-2.jpg", mime_type="image/jpeg")
+        page = SubmissionPage(submission_id=submission_id, page_number=2, original_key="/tmp/paper-2.jpg", mime_type="image/jpeg", original_data=b"original", processed_data=b"processed")
         db.add(page); db.flush()
         db.add(Answer(submission_id=submission_id, question_id=question.id, page_id=page.id, transcription="Second page", prompt_version="perception_v2", sequence=1, mapping_basis="previous_page_continuation", mapping_confidence=0.9))
         db.commit()

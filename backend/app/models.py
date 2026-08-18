@@ -6,7 +6,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, JSON, LargeBinary, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -161,6 +161,8 @@ class SubmissionPage(Base):
     quality_status: Mapped[str] = mapped_column(String(30), default="pending")
     quality_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     quality_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    original_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    processed_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
 
 class Answer(Base):

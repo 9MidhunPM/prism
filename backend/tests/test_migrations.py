@@ -16,3 +16,4 @@ def test_fresh_database_upgrades_through_all_migrations(tmp_path):
     assert "review_severity" in columns
     assert "mapping_review_required" in {column["name"] for column in inspect(engine).get_columns("submissions")}
     assert {"sequence", "mapping_basis", "mapping_confidence"}.issubset({column["name"] for column in inspect(engine).get_columns("answers")})
+    assert {"original_data", "processed_data"}.issubset({column["name"] for column in inspect(engine).get_columns("submission_pages")})

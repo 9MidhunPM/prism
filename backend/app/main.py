@@ -101,6 +101,31 @@ def page_preview_path(page: SubmissionPage) -> Path | None:
     return original
 
 
+def page_has_original(page: SubmissionPage) -> bool:
+    return bool(page.original_data) or Path(page.original_key).is_file()
+
+
+def page_has_preview(page: SubmissionPage) -> bool:
+    return bool(page.processed_data) or bool(page_preview_path(page))
+
+
+def page_source(page: SubmissionPage, processed: bool = True) -> tuple[str, str]:
+    """Return a usable local cache path, restoring it from durable media if needed."""
+    path = Path(page.processed_key) if processed and page.processed_key else Path(page.original_key)
+    mime_type = "image/jpeg" if processed and page.processed_key else page.mime_type
+    data = page.processed_data if processed and page.processed_data else page.original_data
+    if path.is_file():
+        return str(path), mime_type
+    if not data:
+        raise HTTPException(409, "The original page is unavailable. Upload a replacement page before processing.")
+    cache_dir = UPLOADS / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    suffix = ".jpg" if mime_type == "image/jpeg" else ".pdf" if mime_type == "application/pdf" else ".png"
+    restored = cache_dir / f"{page.id}{'-processed' if processed else '-original'}{suffix}"
+    restored.write_bytes(data)
+    return str(restored), mime_type
+
+
 def unavailable_preview() -> bytes:
     image = Image.new("RGB", (1200, 900), "#f3f1eb")
     draw = ImageDraw.Draw(image)
@@ -429,7 +454,8 @@ def question_material(db, submission_id: str, question_id: str) -> tuple[list[An
     transcription_parts: list[str] = []
     for answer, page in rows:
         if page.id not in seen_pages:
-            pages.append((page.page_number, page.processed_key or page.original_key, "image/jpeg" if page.processed_key else page.mime_type))
+            path, mime_type = page_source(page)
+            pages.append((page.page_number, path, mime_type))
             seen_pages.add(page.id)
         transcription_parts.append(f"[Page {page.page_number}]\n{answer.transcription}")
     return answers, pages, "\n\n".join(transcription_parts)
@@ -519,8 +545,7 @@ async def process_submission(submission_id: str) -> None:
         previous_page_answers: list[dict] = []
         mapping_review_required = False
         for page in pages:
-            source_key = page.processed_key or page.original_key
-            source_mime = "image/jpeg" if page.processed_key else page.mime_type
+            source_key, source_mime = page_source(page)
             image_hash = page.image_hash or hashlib.sha256(Path(source_key).read_bytes()).hexdigest()
             input_hash = perception_input_hash(image_hash, [question.number for question in questions], page.page_number, previous_page_answers)
             with session() as db:
@@ -1012,7 +1037,7 @@ async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, stu
         path = UPLOADS / f"{uuid.uuid4()}{extension}"
         path.write_bytes(contents)
         for page in normalize_pages(path, upload.content_type):
-            normalized_pages.append({**page, "original_key": str(path), "mime_type": upload.content_type})
+            normalized_pages.append({**page, "original_key": str(path), "mime_type": upload.content_type, "original_data": contents, "processed_data": Path(page["processed_key"]).read_bytes()})
     if len(normalized_pages) > settings.max_submission_pages:
         raise HTTPException(422, f"Submissions may contain up to {settings.max_submission_pages} pages.")
     with session() as db:
@@ -1035,7 +1060,7 @@ async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, stu
         submission = Submission(exam_id=exam_id, student_id=student.id, status=SubmissionStatus.UPLOADED, source_hash=source_hash)
         db.add(submission); db.flush(); db.add(ProcessingJob(submission_id=submission.id, stage=SubmissionStatus.UPLOADED))
         for page_number, page in enumerate(normalized_pages, 1):
-            db.add(SubmissionPage(submission_id=submission.id, page_number=page_number, original_key=page["original_key"], mime_type=page["mime_type"], **{key: page[key] for key in ("processed_key", "width", "height", "image_hash")}))
+            db.add(SubmissionPage(submission_id=submission.id, page_number=page_number, original_key=page["original_key"], mime_type=page["mime_type"], original_data=page["original_data"], processed_data=page["processed_data"], **{key: page[key] for key in ("processed_key", "width", "height", "image_hash")}))
         db.commit(); submission_id = submission.id
     background_tasks.add_task(process_submission, submission_id)
     return {"id": submission_id, "status": "uploaded", "student_name": student.name, "page_count": len(normalized_pages), "duplicate": False}
@@ -1069,7 +1094,7 @@ def processing_status(submission_id: str, teacher: dict = Depends(current_teache
 def get_submission(submission_id: str, teacher: dict = Depends(current_teacher)):
     with session() as db:
         submission = owned_submission(db, submission_id, teacher["id"]); student = db.get(Student, submission.student_id); exam = db.get(Exam, submission.exam_id)
-        pages = [{"id": p.id, "page_number": p.page_number, "width": p.width, "height": p.height, "preview_url": f"/api/pages/{p.id}/preview", "original_url": f"/api/pages/{p.id}", "quality_status": p.quality_status, "quality_reason": p.quality_reason, "quality_confidence": p.quality_confidence} for p in db.scalars(select(SubmissionPage).where(SubmissionPage.submission_id == submission_id).order_by(SubmissionPage.page_number))]
+        pages = [{"id": p.id, "page_number": p.page_number, "width": p.width, "height": p.height, "preview_url": f"/api/pages/{p.id}/preview", "original_url": f"/api/pages/{p.id}", "original_available": page_has_original(p), "preview_available": page_has_preview(p), "quality_status": p.quality_status, "quality_reason": p.quality_reason, "quality_confidence": p.quality_confidence} for p in db.scalars(select(SubmissionPage).where(SubmissionPage.submission_id == submission_id).order_by(SubmissionPage.page_number))]
         answers = []
         for answer in db.scalars(select(Answer).where(Answer.submission_id == submission_id)):
             regions = db.scalars(select(EvidenceRegion).where(EvidenceRegion.answer_id == answer.id)).all()
@@ -1109,7 +1134,9 @@ def own_submission(submission_id: str, student: dict = Depends(current_student))
 def get_page(page_id: str, teacher: dict = Depends(current_teacher)):
     with session() as db:
         page = db.scalar(select(SubmissionPage).join(Submission).join(Exam).where(SubmissionPage.id == page_id, Exam.teacher_id == teacher["id"]))
-        if not page or not Path(page.original_key).is_file(): raise HTTPException(404, "Original page not found")
+        if not page or not page_has_original(page): raise HTTPException(404, "Original page not found")
+        if page.original_data:
+            return Response(content=page.original_data, media_type=page.mime_type, headers={"Content-Disposition": f'inline; filename="{Path(page.original_key).name}"'})
         return FileResponse(page.original_key, media_type=page.mime_type, filename=Path(page.original_key).name)
 
 
@@ -1119,6 +1146,8 @@ def get_page_preview(page_id: str, teacher: dict = Depends(current_teacher)):
         page = db.scalar(select(SubmissionPage).join(Submission).join(Exam).where(SubmissionPage.id == page_id, Exam.teacher_id == teacher["id"]))
         if not page:
             raise HTTPException(404, "Page not found")
+        if page.processed_data:
+            return Response(content=page.processed_data, media_type="image/jpeg")
         preview = page_preview_path(page)
         if preview:
             db.commit()
@@ -1180,6 +1209,8 @@ async def replace_submission_page(submission_id: str, page_id: str, background_t
         page.original_key = str(path)
         page.mime_type = file.content_type
         page.processed_key = normalized[0]["processed_key"]
+        page.original_data = contents
+        page.processed_data = Path(normalized[0]["processed_key"]).read_bytes()
         page.image_hash = normalized[0]["image_hash"]
         page.width = normalized[0]["width"]
         page.height = normalized[0]["height"]
