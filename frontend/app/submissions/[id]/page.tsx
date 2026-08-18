@@ -84,7 +84,7 @@ export default function SubmissionPage({
         Loading assessment...
       </main>
     );
-  const answer = submission.answers?.find(
+  const answers = submission.answers?.filter(
     (item: any) => item.question_id === selected?.question_id,
   );
   const questions: any[] = Array.from(
@@ -156,6 +156,27 @@ export default function SubmissionPage({
         credentials: "include",
       });
       const data = await refreshed.json();
+      setSubmission(data);
+      setSelected(
+        data.evaluations.find((item: any) => item.id === selected.id),
+      );
+      setProposal(null);
+    }
+    setSaving(false);
+  }
+  async function completeReview() {
+    if (!selected) return;
+    setSaving(true);
+    const response = await fetch(
+      `${API}/evaluations/${selected.id}/complete-review`,
+      { method: "POST", credentials: "include" },
+    );
+    if (response.ok) {
+      const data = await (
+        await fetch(`${API}/submissions/${submission.id}`, {
+          credentials: "include",
+        })
+      ).json();
       setSubmission(data);
       setSelected(
         data.evaluations.find((item: any) => item.id === selected.id),
@@ -375,16 +396,22 @@ export default function SubmissionPage({
                   </div>
                   <span
                     className={
-                      selected.needs_review && !selected.review_resolved
-                        ? "status-pill status-review"
-                        : "status-pill status-success"
+                      selected.review_resolved
+                        ? "status-pill status-success"
+                        : selected.review_severity === "review_required"
+                          ? "status-pill status-danger"
+                          : selected.review_severity === "review_recommended"
+                            ? "status-pill status-review"
+                            : "status-pill status-success"
                     }
                   >
-                    {selected.needs_review && !selected.review_resolved
-                      ? "Review recommended"
-                      : selected.review_resolved
-                        ? "Teacher reviewed"
-                        : "High confidence"}
+                    {selected.review_resolved
+                      ? "Teacher reviewed"
+                      : selected.review_severity === "review_required"
+                        ? "Review required"
+                        : selected.review_severity === "review_recommended"
+                          ? "Review advised"
+                          : "High confidence"}
                   </span>
                 </div>
                 <p className="mt-2 text-xs text-[var(--ink-muted)]">
@@ -434,28 +461,70 @@ export default function SubmissionPage({
                 <p className="mt-4 text-sm leading-6 text-[var(--ink-muted)]">
                   {selected.reason}
                 </p>
-                <blockquote className="mt-4 border-l border-[var(--line)] pl-3 text-sm italic text-[var(--ink-muted)]">
-                  “{selected.evidence[0]?.quote ?? "No quotation was returned."}
-                  ”
-                </blockquote>
-                {answer && (
+                {selected.evidence.map((evidence: any) => (
+                  <button
+                    key={`${evidence.page_id}-${evidence.quote}`}
+                    type="button"
+                    onClick={() => {
+                      const index = submission.pages.findIndex(
+                        (page: any) => page.id === evidence.page_id,
+                      );
+                      if (index >= 0) setActivePage(index);
+                    }}
+                    className="mt-3 block w-full border-l border-[var(--line)] pl-3 text-left text-sm italic text-[var(--ink-muted)] hover:text-[var(--brand-strong)]"
+                  >
+                    Page {evidence.page ?? "?"}: “{evidence.quote}”
+                  </button>
+                ))}
+                {answers?.length > 0 && (
                   <div className="mt-5 border-t border-[var(--line)] pt-4">
                     <h3 className="text-sm font-medium">Transcription</h3>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--ink-muted)]">
-                      {answer.transcription}
+                    {answers.map((answer: any) => {
+                      const page = submission.pages.find(
+                        (item: any) => item.id === answer.page_id,
+                      );
+                      return (
+                        <div key={answer.id} className="mt-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ink-muted)]">
+                            Page {page?.page_number ?? "?"}
+                            {answer.mapping_basis ===
+                            "previous_page_continuation"
+                              ? " · continuation"
+                              : ""}
+                          </p>
+                          <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-[var(--ink-muted)]">
+                            {answer.transcription}
+                          </p>
+                          {answer.uncertainty.length > 0 && (
+                            <p className="mt-2 text-xs text-[var(--review)]">
+                              Contains uncertain transcription:{" "}
+                              {answer.uncertainty
+                                .map(
+                                  (segment: any) =>
+                                    `${segment.text} (${Math.round((segment.confidence ?? 0) * 100)}%)`,
+                                )
+                                .join(", ")}
+                              .
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {!selected.review_resolved && selected.review_severity && (
+                  <div className="mt-5 border-t border-[var(--line)] pt-4">
+                    <button
+                      type="button"
+                      onClick={() => void completeReview()}
+                      disabled={saving}
+                      className="button-secondary"
+                    >
+                      {saving ? "Saving" : "Complete review"}
+                    </button>
+                    <p className="mt-2 text-xs text-[var(--ink-muted)]">
+                      Confirms this review and keeps the current mark unchanged.
                     </p>
-                    {answer.uncertainty.length > 0 && (
-                      <p className="mt-3 text-xs text-[var(--review)]">
-                        Contains uncertain transcription:{" "}
-                        {answer.uncertainty
-                          .map(
-                            (segment: any) =>
-                              `${segment.text} (${Math.round((segment.confidence ?? 0) * 100)}%)`,
-                          )
-                          .join(", ")}
-                        .
-                      </p>
-                    )}
                   </div>
                 )}
                 <form

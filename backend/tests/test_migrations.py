@@ -14,3 +14,5 @@ def test_fresh_database_upgrades_through_all_migrations(tmp_path):
     engine = create_engine(f"sqlite:///{database_path}")
     columns = {column["name"] for column in inspect(engine).get_columns("criterion_evaluations")}
     assert "review_severity" in columns
+    assert "mapping_review_required" in {column["name"] for column in inspect(engine).get_columns("submissions")}
+    assert {"sequence", "mapping_basis", "mapping_confidence"}.issubset({column["name"] for column in inspect(engine).get_columns("answers")})

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -17,8 +18,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 
 from . import database
-from .ai import (EXAM_IMPORT_VERSION, PerceptionResult, answer_teacher_question,
-                 grade_criterion, import_exam_pages, model_for, perceive_page, review_criterion)
+from .ai import (EXAM_IMPORT_VERSION, PERCEPTION_VERSION, PerceptionResult,
+                 answer_teacher_question, grade_criterion, import_exam_pages,
+                 model_for, perceive_page, review_criterion)
 from .auth import hash_password, random_token, token_hash, verify_password
 from .demo import seed_demo_accounts
 from .models import (AIArtifact, Account, AccountRole, Answer, AuthSession, ClassCohort, ClassMembership, CriterionEvaluation, EvaluationEvidence, Exam,
@@ -402,6 +404,35 @@ def clear_submission_results(db, submission_id: str) -> None:
     submission = db.get(Submission, submission_id)
     if submission:
         submission.total_score = 0
+        submission.mapping_review_required = False
+
+
+def normalized_question_number(value: str | None) -> str:
+    return "".join((value or "").upper().split())
+
+
+def resolve_question(value: str | None, questions: list[Question]) -> Question | None:
+    matches = [question for question in questions if normalized_question_number(question.number) == normalized_question_number(value)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def perception_input_hash(image_hash: str, question_numbers: list[str], page_number: int, previous_page_answers: list[dict]) -> str:
+    payload = json.dumps({"image_hash": image_hash, "prompt_version": PERCEPTION_VERSION, "page_number": page_number, "question_numbers": question_numbers, "previous_page_answers": previous_page_answers}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def question_material(db, submission_id: str, question_id: str) -> tuple[list[Answer], list[tuple[int, str, str]], str]:
+    rows = db.execute(select(Answer, SubmissionPage).join(SubmissionPage, Answer.page_id == SubmissionPage.id).where(Answer.submission_id == submission_id, Answer.question_id == question_id).order_by(SubmissionPage.page_number, Answer.sequence, Answer.id)).all()
+    answers = [answer for answer, _ in rows]
+    pages: list[tuple[int, str, str]] = []
+    seen_pages: set[str] = set()
+    transcription_parts: list[str] = []
+    for answer, page in rows:
+        if page.id not in seen_pages:
+            pages.append((page.page_number, page.processed_key or page.original_key, "image/jpeg" if page.processed_key else page.mime_type))
+            seen_pages.add(page.id)
+        transcription_parts.append(f"[Page {page.page_number}]\n{answer.transcription}")
+    return answers, pages, "\n\n".join(transcription_parts)
 
 
 def recalculate_submission_state(db, submission_id: str) -> SubmissionStatus:
@@ -419,7 +450,7 @@ def recalculate_submission_state(db, submission_id: str) -> SubmissionStatus:
         )
         .limit(1)
     )
-    status = SubmissionStatus.REVIEW_REQUIRED if unresolved else SubmissionStatus.COMPLETED
+    status = SubmissionStatus.REVIEW_REQUIRED if unresolved or submission.mapping_review_required else SubmissionStatus.COMPLETED
     submission.status = status
     job = db.scalar(select(ProcessingJob).where(ProcessingJob.submission_id == submission_id))
     if job:
@@ -485,13 +516,16 @@ async def process_submission(submission_id: str) -> None:
             clear_submission_results(db, submission_id)
             db.commit()
         set_processing_stage(submission_id, SubmissionStatus.TRANSCRIBING)
+        previous_page_answers: list[dict] = []
+        mapping_review_required = False
         for page in pages:
             source_key = page.processed_key or page.original_key
             source_mime = "image/jpeg" if page.processed_key else page.mime_type
             image_hash = page.image_hash or hashlib.sha256(Path(source_key).read_bytes()).hexdigest()
+            input_hash = perception_input_hash(image_hash, [question.number for question in questions], page.page_number, previous_page_answers)
             with session() as db:
-                artifact = db.scalar(select(AIArtifact).where(AIArtifact.operation == "perception", AIArtifact.prompt_version == "perception_v1", AIArtifact.input_hash == image_hash).order_by(AIArtifact.created_at.desc()))
-            perception = PerceptionResult.model_validate(artifact.output) if artifact else await perceive_page(source_key, source_mime, [q.number for q in questions])
+                artifact = db.scalar(select(AIArtifact).where(AIArtifact.operation == "perception", AIArtifact.prompt_version == PERCEPTION_VERSION, AIArtifact.input_hash == input_hash).order_by(AIArtifact.created_at.desc()))
+            perception = PerceptionResult.model_validate(artifact.output) if artifact else await perceive_page(source_key, source_mime, [question.number for question in questions], page.page_number, previous_page_answers)
             with session() as db:
                 stored_page = db.get(SubmissionPage, page.id)
                 # A legible page may still have uncertain words or a partial answer.
@@ -504,17 +538,32 @@ async def process_submission(submission_id: str) -> None:
                 stored_page.quality_reason = perception.quality_reason or ("No reliable handwritten answers could be read from this page." if not perception.answers else None)
                 stored_page.quality_confidence = perception.quality_confidence
                 if not artifact:
-                    db.add(AIArtifact(submission_id=submission_id, operation="perception", model=model_for("perception"), prompt_version="perception_v1", input_hash=image_hash, output=perception.model_dump()))
-                for result_answer in perception.answers:
-                    matched_question = next((q for q in questions if q.number == result_answer.question_id), None)
-                    answer = Answer(submission_id=submission_id, question_id=matched_question.id if matched_question else None, page_id=page.id, transcription=result_answer.transcription, confidence=result_answer.confidence, uncertainty=[segment.model_dump() for segment in result_answer.uncertain_segments], prompt_version="perception_v1")
+                    db.add(AIArtifact(submission_id=submission_id, operation="perception", model=model_for("perception"), prompt_version=PERCEPTION_VERSION, input_hash=input_hash, output=perception.model_dump()))
+                accepted_for_page: list[dict] = []
+                previous_question_ids = {item["question_id"] for item in previous_page_answers}
+                for result_answer in sorted(perception.answers, key=lambda item: item.sequence):
+                    matched_question = resolve_question(result_answer.question_id, questions)
+                    accepted = (
+                        matched_question is not None
+                        and (result_answer.mapping_basis == "visible_identifier" or (result_answer.mapping_basis == "previous_page_continuation" and matched_question.id in previous_question_ids))
+                    )
+                    if result_answer.mapping_basis == "unknown" or not accepted:
+                        matched_question = None
+                        mapping_review_required = mapping_review_required or bool(result_answer.transcription.strip())
+                    confidence = min(result_answer.confidence, result_answer.mapping_confidence) if matched_question else result_answer.confidence
+                    answer = Answer(submission_id=submission_id, question_id=matched_question.id if matched_question else None, page_id=page.id, transcription=result_answer.transcription, confidence=confidence, uncertainty=[segment.model_dump() for segment in result_answer.uncertain_segments], prompt_version=PERCEPTION_VERSION, sequence=result_answer.sequence, mapping_basis=result_answer.mapping_basis, mapping_confidence=result_answer.mapping_confidence)
                     db.add(answer)
                     db.flush()
                     for region in result_answer.visual_regions:
                         db.add(EvidenceRegion(answer_id=answer.id, page_id=page.id, kind=region.kind, text=region.description, bbox={"coordinates": region.bbox}))
                     for region in result_answer.formula_regions:
                         db.add(EvidenceRegion(answer_id=answer.id, page_id=page.id, kind="formula", text=region.description, bbox={"coordinates": region.bbox}))
+                    if matched_question:
+                        accepted_for_page.append({"question_id": matched_question.id, "ending_excerpt": result_answer.transcription[-240:]})
+                stored_submission = db.get(Submission, submission_id)
+                stored_submission.mapping_review_required = mapping_review_required
                 db.commit()
+            previous_page_answers = accepted_for_page
             if unreadable:
                 # Keep the submission in an existing persisted state. Page-level
                 # quality carries the rescan requirement without a DB enum migration.
@@ -523,29 +572,34 @@ async def process_submission(submission_id: str) -> None:
         set_processing_stage(submission_id, SubmissionStatus.GRADING)
         for question in questions:
             with session() as db:
-                mapped_answers = db.scalars(select(Answer).join(SubmissionPage).where(Answer.submission_id == submission_id, Answer.question_id == question.id).order_by(SubmissionPage.page_number, Answer.id)).all()
+                mapped_answers, question_pages, transcription = question_material(db, submission_id, question.id)
                 criteria = db.scalars(select(RubricCriterion).where(RubricCriterion.question_id == question.id).order_by(RubricCriterion.code)).all()
-                page = db.get(SubmissionPage, mapped_answers[0].page_id) if mapped_answers else None
-            if not mapped_answers or not page:
+            if not mapped_answers:
                 continue
-            transcription = "\n\n".join(answer.transcription for answer in mapped_answers)
             for criterion in criteria:
-                result = await grade_criterion(page.processed_key or page.original_key, "image/jpeg" if page.processed_key else page.mime_type, question.text, criterion_data(criterion), transcription)
+                result = await grade_criterion(question_pages, question.text, criterion_data(criterion), transcription)
                 with session() as db:
                     low_confidence = result.confidence < REVIEW_THRESHOLD or any(answer.uncertainty or (answer.confidence or 0) < REVIEW_THRESHOLD for answer in mapped_answers)
-                    review_severity = "review_required" if result.needs_review else "review_recommended" if low_confidence else None
+                    review_severity = "review_required" if result.blocking_reason else "review_recommended" if low_confidence else None
                     evaluation = CriterionEvaluation(answer_id=mapped_answers[0].id, criterion_id=criterion.id, ai_marks=min(criterion.max_marks, max(0, result.awarded_marks)), reason=result.reason, confidence=result.confidence, needs_review=review_severity is not None, review_severity=review_severity, review_resolved=review_severity is None)
                     db.add(evaluation)
                     db.flush()
-                    for quote in result.evidence_quotes:
-                        db.add(EvaluationEvidence(evaluation_id=evaluation.id, page_id=page.id, quote=quote))
+                    page_ids = {page_number: answer.page_id for answer in mapped_answers for page_number, _, _ in question_pages if page_number == db.get(SubmissionPage, answer.page_id).page_number}
+                    for evidence in result.evidence:
+                        page_id = page_ids.get(evidence.page_number)
+                        if page_id:
+                            db.add(EvaluationEvidence(evaluation_id=evaluation.id, page_id=page_id, quote=evidence.quote))
+                        else:
+                            evaluation.review_severity = "review_recommended"
+                            evaluation.needs_review = True
+                            evaluation.review_resolved = False
                     db.commit()
         with session() as db:
             submission = db.get(Submission, submission_id)
-            review_needed = db.scalar(select(CriterionEvaluation.id).join(Answer).where(Answer.submission_id == submission_id, CriterionEvaluation.review_severity == "review_required", CriterionEvaluation.review_resolved.is_(False)).limit(1)) is not None
+            review_needed = submission.mapping_review_required or db.scalar(select(CriterionEvaluation.id).join(Answer).where(Answer.submission_id == submission_id, CriterionEvaluation.review_severity == "review_required", CriterionEvaluation.review_resolved.is_(False)).limit(1)) is not None
             score_submission(db, submission)
             db.commit()
-        set_processing_stage(submission_id, SubmissionStatus.REVIEW_REQUIRED if review_needed else SubmissionStatus.COMPLETED)
+        set_processing_stage(submission_id, SubmissionStatus.REVIEW_REQUIRED if review_needed else SubmissionStatus.COMPLETED, "Visible writing could not be mapped to a question." if submission.mapping_review_required else None)
     except Exception as exc:
         set_processing_stage(submission_id, SubmissionStatus.FAILED, str(exc))
 
@@ -1020,7 +1074,7 @@ def get_submission(submission_id: str, teacher: dict = Depends(current_teacher))
         for answer in db.scalars(select(Answer).where(Answer.submission_id == submission_id)):
             regions = db.scalars(select(EvidenceRegion).where(EvidenceRegion.answer_id == answer.id)).all()
             region_data = lambda region: {"kind": region.kind, "description": region.text, "bbox": (region.bbox or {}).get("coordinates")}
-            answers.append({"id": answer.id, "question_id": answer.question_id, "page_id": answer.page_id, "transcription": answer.transcription, "uncertainty": answer.uncertainty, "prompt_version": answer.prompt_version, "confidence": answer.confidence, "visual_regions": [region_data(region) for region in regions if region.kind != "formula"], "formula_regions": [region_data(region) for region in regions if region.kind == "formula"]})
+            answers.append({"id": answer.id, "question_id": answer.question_id, "page_id": answer.page_id, "transcription": answer.transcription, "uncertainty": answer.uncertainty, "prompt_version": answer.prompt_version, "confidence": answer.confidence, "sequence": answer.sequence, "mapping_basis": answer.mapping_basis, "mapping_confidence": answer.mapping_confidence, "visual_regions": [region_data(region) for region in regions if region.kind != "formula"], "formula_regions": [region_data(region) for region in regions if region.kind == "formula"]})
         evaluations = []
         for ev, criterion, question in db.execute(select(CriterionEvaluation, RubricCriterion, Question).select_from(CriterionEvaluation).join(RubricCriterion, CriterionEvaluation.criterion_id == RubricCriterion.id).join(Question, RubricCriterion.question_id == Question.id).join(Answer, CriterionEvaluation.answer_id == Answer.id).where(Answer.submission_id == submission_id).order_by(Question.number)):
             pending = db.scalar(select(ReviewSuggestion).where(ReviewSuggestion.evaluation_id == ev.id, ReviewSuggestion.status == "pending").order_by(ReviewSuggestion.created_at.desc()))
@@ -1032,7 +1086,7 @@ def student_result(db, submission: Submission) -> dict:
     exam = db.get(Exam, submission.exam_id)
     evaluations = []
     for ev, criterion, question in db.execute(select(CriterionEvaluation, RubricCriterion, Question).select_from(CriterionEvaluation).join(RubricCriterion, CriterionEvaluation.criterion_id == RubricCriterion.id).join(Question, RubricCriterion.question_id == Question.id).join(Answer, CriterionEvaluation.answer_id == Answer.id).where(Answer.submission_id == submission.id).order_by(Question.number)):
-        evaluations.append({"id": ev.id, "question_number": question.number, "criterion_title": criterion.title, "max_marks": criterion.max_marks, "marks": ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks, "reason": ev.reason, "confidence": ev.confidence, "needs_review": ev.needs_review, "evidence": [{"page": page.page_number if (page := db.get(SubmissionPage, evidence.page_id)) else None, "quote": evidence.quote} for evidence in db.scalars(select(EvaluationEvidence).where(EvaluationEvidence.evaluation_id == ev.id))]})
+        evaluations.append({"id": ev.id, "question_number": question.number, "criterion_title": criterion.title, "max_marks": criterion.max_marks, "marks": ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks, "reason": ev.reason, "confidence": ev.confidence, "needs_review": ev.needs_review, "review_severity": ev.review_severity, "review_resolved": ev.review_resolved, "evidence": [{"page": page.page_number if (page := db.get(SubmissionPage, evidence.page_id)) else None, "quote": evidence.quote} for evidence in db.scalars(select(EvaluationEvidence).where(EvaluationEvidence.evaluation_id == ev.id))]})
     return {"id": submission.id, "exam_id": submission.exam_id, "exam_title": exam.title, "subject": exam.subject, "status": submission.status.value, "total_score": submission.total_score, "created_at": submission.created_at, "evaluations": evaluations}
 
 
@@ -1143,11 +1197,12 @@ async def replace_submission_page(submission_id: str, page_id: str, background_t
 async def request_review(evaluation_id: str, payload: ReviewInput, teacher: dict = Depends(current_teacher)):
     if not settings.openai_enabled: raise HTTPException(503, "OPENAI_API_KEY is required for criterion re-evaluation.")
     with session() as db:
-        evaluation = owned_evaluation(db, evaluation_id, teacher["id"]); answer = db.get(Answer, evaluation.answer_id); page = db.get(SubmissionPage, answer.page_id); criterion = db.get(RubricCriterion, evaluation.criterion_id); question = db.get(Question, criterion.question_id)
+        evaluation = owned_evaluation(db, evaluation_id, teacher["id"]); answer = db.get(Answer, evaluation.answer_id); criterion = db.get(RubricCriterion, evaluation.criterion_id); question = db.get(Question, criterion.question_id)
         if db.scalar(select(ReviewSuggestion.id).where(ReviewSuggestion.evaluation_id == evaluation.id, ReviewSuggestion.status == "pending").limit(1)):
             raise HTTPException(409, "A PRISM suggestion is already awaiting your decision.")
         current_marks = evaluation.teacher_marks if evaluation.teacher_marks is not None else evaluation.ai_marks
-        result = await review_criterion(page.processed_key or page.original_key, "image/jpeg" if page.processed_key else page.mime_type, question.text, criterion_data(criterion), answer.transcription, current_marks, evaluation.reason, payload.comment)
+        _, question_pages, transcription = question_material(db, answer.submission_id, question.id)
+        result = await review_criterion(question_pages, question.text, criterion_data(criterion), transcription, current_marks, evaluation.reason, payload.comment)
         review = ReviewSuggestion(evaluation_id=evaluation.id, requested_by_teacher_id=teacher["id"], comment=payload.comment, suggested_marks=min(criterion.max_marks, max(0, result.suggested_marks)), reason=result.reason, evidence_quotes=result.evidence_quotes, confidence=result.confidence)
         db.add(review); db.commit()
         return {"id": review.id, "previous_marks": current_marks, "suggested_marks": review.suggested_marks, "reason": review.reason, "evidence": review.evidence_quotes, "confidence": review.confidence, "status": review.status}
@@ -1172,6 +1227,21 @@ def decide_review(review_id: str, decision: Literal["accept", "reject"], teacher
         status = recalculate_submission_state(db, submission_id)
         db.commit()
     return {"status": decision, "submission_status": status.value}
+
+
+@app.post("/api/evaluations/{evaluation_id}/complete-review")
+def complete_review(evaluation_id: str, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        evaluation = owned_evaluation(db, evaluation_id, teacher["id"])
+        evaluation.review_resolved = True
+        evaluation.review_resolution = "completed"
+        evaluation.reviewed_at = datetime.now(timezone.utc)
+        for review in db.scalars(select(ReviewSuggestion).where(ReviewSuggestion.evaluation_id == evaluation.id, ReviewSuggestion.status == "pending")):
+            review.status = "superseded"
+        submission_id = db.get(Answer, evaluation.answer_id).submission_id
+        status = recalculate_submission_state(db, submission_id)
+        db.commit()
+    return {"status": "completed", "submission_status": status.value}
 
 
 @app.patch("/api/evaluations/{evaluation_id}")
@@ -1240,7 +1310,7 @@ def class_analytics(class_id: str, teacher: dict = Depends(current_teacher)):
             bucket = concepts.setdefault(name, [0, 0, 0])
             bucket[0] += marks
             bucket[1] += criterion.max_marks
-            bucket[2] += int(evaluation.needs_review)
+            bucket[2] += int(evaluation.review_severity == "review_required" and not evaluation.review_resolved)
         scores = [submission.total_score for submission in submissions if submission.status in {SubmissionStatus.COMPLETED, SubmissionStatus.REVIEW_REQUIRED}]
         return {"class": {"id": cohort.id, "name": cohort.name}, "student_count": len(students), "submission_count": len(submissions), "average_score": round(sum(scores) / len(scores), 2) if scores else 0, "concepts": [{"name": name, "mastery": round(bucket[0] / bucket[1] * 100) if bucket[1] else 0, "review_rate": round(bucket[2] / len(submissions) * 100) if submissions else 0} for name, bucket in sorted(concepts.items(), key=lambda item: item[1][0] / item[1][1] if item[1][1] else 0)], "students": [{"id": student.id, "name": student.name, "identifier": student.identifier, "profile": profile_data(db, student, teacher["id"])} for student in students]}
 
@@ -1273,7 +1343,7 @@ def analytics(exam_id: str, teacher: dict = Depends(current_teacher)):
             marks = evaluation.teacher_marks if evaluation.teacher_marks is not None else evaluation.ai_marks
             concept = criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized"
             concept_bucket = concepts.setdefault(concept, [0, 0, 0, 0])
-            concept_bucket[0] += marks; concept_bucket[1] += criterion.max_marks; concept_bucket[2] += 1; concept_bucket[3] += int(evaluation.needs_review)
+            concept_bucket[0] += marks; concept_bucket[1] += criterion.max_marks; concept_bucket[2] += 1; concept_bucket[3] += int(evaluation.review_severity == "review_required" and not evaluation.review_resolved)
             question_bucket = questions.setdefault(question.number, [question.text, 0, 0, 0])
             question_bucket[1] += marks; question_bucket[2] += criterion.max_marks; question_bucket[3] += 1
             criterion_bucket = criteria.setdefault(criterion.title, [question.number, 0, 0, 0])

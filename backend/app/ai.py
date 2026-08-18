@@ -2,6 +2,7 @@
 
 import base64
 import json
+from typing import Literal
 from pathlib import Path
 
 import fitz
@@ -11,9 +12,9 @@ from .settings import get_settings
 
 settings = get_settings()
 MODEL = settings.luna_model
-PERCEPTION_VERSION = "perception_v1"
-GRADING_VERSION = "grading_v1"
-REVIEW_VERSION = "review_v1"
+PERCEPTION_VERSION = "perception_v2"
+GRADING_VERSION = "grading_v2"
+REVIEW_VERSION = "review_v2"
 STUDENT_PROFILE_VERSION = "student_profile_v1"
 CLASS_ANALYSIS_VERSION = "class_analysis_v1"
 TEACHER_CHAT_VERSION = "teacher_chat_v1"
@@ -36,7 +37,10 @@ def client() -> AsyncOpenAI:
 
 
 class PerceivedAnswer(BaseModel):
-    question_id: str
+    question_id: str | None = None
+    mapping_basis: Literal["visible_identifier", "previous_page_continuation", "unknown"]
+    mapping_confidence: float = Field(ge=0, le=1)
+    sequence: int = Field(ge=1)
     transcription: str
     confidence: float = Field(ge=0, le=1)
     uncertain_segments: list["UncertainSegment"] = []
@@ -67,9 +71,14 @@ class PerceptionResult(BaseModel):
 class GradeResult(BaseModel):
     awarded_marks: float = Field(ge=0)
     reason: str
-    evidence_quotes: list[str]
+    evidence: list["GradeEvidence"]
     confidence: float = Field(ge=0, le=1)
-    needs_review: bool
+    blocking_reason: Literal["unreadable_evidence", "missing_evidence", "irreconcilable_ambiguity"] | None = None
+
+
+class GradeEvidence(BaseModel):
+    page_number: int = Field(ge=1)
+    quote: str
 
 
 class ReviewResult(BaseModel):
@@ -118,29 +127,34 @@ def image_content(path: str, mime_type: str) -> dict:
     return {"type": "input_image", "image_url": f"data:{mime_type};base64,{encoded}"}
 
 
-async def perceive_page(path: str, mime_type: str, question_numbers: list[str]) -> PerceptionResult:
+async def perceive_page(path: str, mime_type: str, question_numbers: list[str], page_number: int, previous_page_answers: list[dict]) -> PerceptionResult:
     openai_client = client()
-    prompt = f"""You are PRISM's document perception operation ({PERCEPTION_VERSION}).
-Transcribe only what is visibly handwritten. Map it to these expected question identifiers when visible: {question_numbers}.
+    prompt = f"""You are PRISM's document perception operation ({PERCEPTION_VERSION}) for page {page_number}.
+Transcribe only what is visibly handwritten. Expected question identifiers: {question_numbers}. The immediately previous page ended with these accepted answer fragments: {json.dumps(previous_page_answers)}.
+For each visible fragment, return a sequence number and mapping_basis. Use visible_identifier only for a visibly associated identifier. Use previous_page_continuation only when an unlabelled fragment clearly continues a listed previous-page answer; never infer this from similar subject matter. Use unknown with question_id null when visible writing cannot be mapped safely. A page can contain a continuation followed by a newly labelled answer. Do not omit visible writing because its mapping is unknown.
 Preserve spelling, grammar, incorrect statements and incorrect formulas exactly. Never solve, improve, or correct the exam. Never infer invisible content.
 Use [ILLEGIBLE] for unreadable text and [UNCERTAIN: option A | option B] for ambiguity. For every uncertain segment, return the exact text, alternatives, and confidence. Record visibly present diagrams, tables, graphs, and formulas as visual/formula regions without judging correctness. Bounding boxes, when visible, are normalized [left, top, right, bottom] values from 0 to 1. Assess the overall page as readable, blurry, or unreadable. Set requires_rescan true only when the page cannot be responsibly assessed from the supplied scan and state the visual reason."""
     response = await openai_client.responses.parse(model=model_for("perception"), input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=PerceptionResult)
     return response.output_parsed
 
 
-async def grade_criterion(path: str, mime_type: str, question: str, criterion: dict, transcription: str) -> GradeResult:
+async def grade_criterion(pages: list[tuple[int, str, str]], question: str, criterion: dict, transcription: str) -> GradeResult:
     openai_client = client()
     prompt = f"""You are PRISM's rubric grading operation ({GRADING_VERSION}). Grade only this one criterion.
 Question: {question}
 Criterion: {criterion['title']} - {criterion['description']}
 Maximum marks: {criterion['max_marks']}
-Student transcription: {transcription}
-Use the image as ground evidence. Award a score between zero and the maximum, quote evidence exactly, and flag uncertainty. Do not calculate totals."""
-    response = await openai_client.responses.parse(model=model_for("grading"), input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=GradeResult)
+Student transcription, labelled by page: {transcription}
+Use every supplied image as ground evidence. Award a score between zero and the maximum. Every evidence item must quote exact evidence and identify its supplied page number. Set blocking_reason only when evidence is unreadable, missing, or irreconcilably ambiguous enough that a responsible mark cannot be finalized. Ordinary uncertainty belongs in confidence, not blocking_reason. Do not calculate totals."""
+    content = [{"type": "input_text", "text": prompt}]
+    for page_number, path, mime_type in pages:
+        content.append({"type": "input_text", "text": f"Original paper page {page_number}:"})
+        content.append(image_content(path, mime_type))
+    response = await openai_client.responses.parse(model=model_for("grading"), input=[{"role": "user", "content": content}], text_format=GradeResult)
     return response.output_parsed
 
 
-async def review_criterion(path: str, mime_type: str, question: str, criterion: dict, transcription: str, current_marks: float, current_reason: str, teacher_comment: str) -> ReviewResult:
+async def review_criterion(pages: list[tuple[int, str, str]], question: str, criterion: dict, transcription: str, current_marks: float, current_reason: str, teacher_comment: str) -> ReviewResult:
     openai_client = client()
     prompt = f"""You are PRISM's teacher review operation ({REVIEW_VERSION}). Re-evaluate only this criterion.
 Question: {question}
@@ -150,8 +164,12 @@ Student transcription: {transcription}
 Current suggested marks: {current_marks}
 Current reason: {current_reason}
 Teacher comment: {teacher_comment}
-Use the original image as ground evidence. Return a suggested score between zero and the maximum, concise evidence-backed reasoning, and exact evidence quotes. Do not calculate totals and do not change any stored score."""
-    response = await openai_client.responses.parse(model=model_for("review"), input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=ReviewResult)
+Use every supplied original-paper image as ground evidence. Return a suggested score between zero and the maximum, concise evidence-backed reasoning, and exact evidence quotes. Do not calculate totals and do not change any stored score."""
+    content = [{"type": "input_text", "text": prompt}]
+    for page_number, path, mime_type in pages:
+        content.append({"type": "input_text", "text": f"Original paper page {page_number}:"})
+        content.append(image_content(path, mime_type))
+    response = await openai_client.responses.parse(model=model_for("review"), input=[{"role": "user", "content": content}], text_format=ReviewResult)
     return response.output_parsed
 
 

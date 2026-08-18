@@ -143,6 +143,7 @@ class Submission(Base):
     source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    mapping_review_required: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class SubmissionPage(Base):
@@ -172,6 +173,9 @@ class Answer(Base):
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     uncertainty: Mapped[list[dict]] = mapped_column(JSON, default=list)
     prompt_version: Mapped[str] = mapped_column(String(50))
+    sequence: Mapped[int] = mapped_column(Integer, default=1)
+    mapping_basis: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    mapping_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class EvidenceRegion(Base):

@@ -6,7 +6,7 @@ import fitz
 from fastapi import BackgroundTasks, HTTPException, UploadFile
 from starlette.datastructures import Headers
 
-from app.main import create_exam, delete_exam, recalculate_submission_state, ExamInput, QuestionInput, CriterionInput, start_processing, upload_submission
+from app.main import complete_review, create_exam, delete_exam, perception_input_hash, question_material, recalculate_submission_state, resolve_question, ExamInput, QuestionInput, CriterionInput, start_processing, upload_submission
 from app.models import (AIArtifact, Answer, ClassCohort, CriterionEvaluation,
                         EvaluationEvidence, EvidenceRegion, Exam, ProcessingJob,
                         Question, ReviewSuggestion, RubricCriterion, Student,
@@ -130,3 +130,49 @@ def test_delete_exam_rejects_active_processing(isolated_database):
     with pytest.raises(HTTPException) as error:
         delete_exam(exam["id"], teacher={"id": teacher})
     assert error.value.status_code == 409
+
+
+def test_complete_review_keeps_current_mark_and_completes_required_paper(isolated_database):
+    teacher = teacher_id()
+    exam = exam_for(teacher)
+    submission_id, evaluation_id = evaluation_tree(teacher, exam["id"])
+    with database.SessionLocal() as db:
+        evaluation = db.get(CriterionEvaluation, evaluation_id)
+        evaluation.needs_review = True
+        evaluation.review_severity = "review_required"
+        evaluation.review_resolved = False
+        db.commit()
+    result = complete_review(evaluation_id, teacher={"id": teacher})
+    assert result == {"status": "completed", "submission_status": "completed"}
+    with database.SessionLocal() as db:
+        evaluation = db.get(CriterionEvaluation, evaluation_id)
+        submission = db.get(Submission, submission_id)
+        assert evaluation.teacher_marks is None
+        assert evaluation.ai_marks == 1
+        assert evaluation.review_resolution == "completed"
+        assert evaluation.review_resolved is True
+        assert submission.status == SubmissionStatus.COMPLETED
+
+
+def test_continuation_context_changes_the_perception_cache_identity(isolated_database):
+    initial = perception_input_hash("a" * 64, ["Q1"], 2, [{"question_id": "one", "ending_excerpt": "first"}])
+    changed = perception_input_hash("a" * 64, ["Q1"], 2, [{"question_id": "two", "ending_excerpt": "first"}])
+    assert initial != changed
+
+
+def test_question_material_keeps_page_fragments_in_order(isolated_database):
+    teacher = teacher_id()
+    exam = exam_for(teacher)
+    submission_id, _ = evaluation_tree(teacher, exam["id"])
+    with database.SessionLocal() as db:
+        first = db.query(Answer).filter_by(submission_id=submission_id).one()
+        question = db.get(Question, first.question_id)
+        page = SubmissionPage(submission_id=submission_id, page_number=2, original_key="/tmp/paper-2.jpg", mime_type="image/jpeg")
+        db.add(page); db.flush()
+        db.add(Answer(submission_id=submission_id, question_id=question.id, page_id=page.id, transcription="Second page", prompt_version="perception_v2", sequence=1, mapping_basis="previous_page_continuation", mapping_confidence=0.9))
+        db.commit()
+        answers, pages, transcription = question_material(db, submission_id, question.id)
+        assert [answer.transcription for answer in answers] == ["Answer", "Second page"]
+        assert [page_number for page_number, _, _ in pages] == [1, 2]
+        assert "[Page 1]" in transcription and "[Page 2]" in transcription
+        assert resolve_question(" q1 ", [question]) == question
