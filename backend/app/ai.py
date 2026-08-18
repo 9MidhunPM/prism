@@ -6,8 +6,10 @@ from pathlib import Path
 import fitz
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
+from .settings import get_settings
 
-MODEL = "gpt-5.6-luna"
+settings = get_settings()
+MODEL = settings.openai_model
 PERCEPTION_VERSION = "perception_v1"
 GRADING_VERSION = "grading_v1"
 REVIEW_VERSION = "review_v1"
@@ -47,7 +49,7 @@ def image_content(path: str, mime_type: str) -> dict:
 
 
 async def perceive_page(path: str, mime_type: str, question_numbers: list[str]) -> PerceptionResult:
-    client = AsyncOpenAI(max_retries=2, timeout=60)
+    client = AsyncOpenAI(max_retries=settings.openai_max_retries, timeout=settings.openai_timeout_seconds)
     prompt = f"""You are PRISM's document perception operation ({PERCEPTION_VERSION}).
 Transcribe only what is visibly handwritten. Map it to these expected question identifiers when visible: {question_numbers}.
 Preserve spelling, grammar, incorrect statements and incorrect formulas exactly. Never solve, improve, or correct the exam. Never infer invisible content.
@@ -57,7 +59,7 @@ Use [ILLEGIBLE] for unreadable text and [UNCERTAIN: option A | option B] for amb
 
 
 async def grade_criterion(path: str, mime_type: str, question: str, criterion: dict, transcription: str) -> GradeResult:
-    client = AsyncOpenAI(max_retries=2, timeout=60)
+    client = AsyncOpenAI(max_retries=settings.openai_max_retries, timeout=settings.openai_timeout_seconds)
     prompt = f"""You are PRISM's rubric grading operation ({GRADING_VERSION}). Grade only this one criterion.
 Question: {question}
 Criterion: {criterion['title']} - {criterion['description']}

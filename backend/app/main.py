@@ -16,13 +16,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from .ai import grade_criterion, perceive_page
+from .settings import get_settings
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
 UPLOADS = DATA / "uploads"
 DB = DATA / "prism.db"
-MODEL = "gpt-5.6-luna"
-REVIEW_THRESHOLD = 0.75
+settings = get_settings()
+MODEL = settings.openai_model
+REVIEW_THRESHOLD = settings.ai_review_threshold
 ALLOWED_TYPES = {"image/jpeg", "image/png", "application/pdf"}
 
 
@@ -200,13 +202,13 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="PRISM API", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["https://prism.midhunpm.in", "http://localhost:3000"], allow_origin_regex=r"http://localhost:\d+", allow_methods=["*"], allow_headers=["*"])
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list, allow_origin_regex=r"http://localhost:\d+", allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
 
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "model": MODEL}
+    return {"status": "ok", "model": MODEL, "ai_enabled": settings.openai_enabled}
 
 
 @app.get("/api/dashboard")
