@@ -1,6 +1,7 @@
 """Versioned, narrowly scoped Luna operations for PRISM."""
 
 import base64
+import json
 from pathlib import Path
 
 import fitz
@@ -15,6 +16,7 @@ GRADING_VERSION = "grading_v1"
 REVIEW_VERSION = "review_v1"
 STUDENT_PROFILE_VERSION = "student_profile_v1"
 CLASS_ANALYSIS_VERSION = "class_analysis_v1"
+TEACHER_CHAT_VERSION = "teacher_chat_v1"
 
 
 def client() -> AsyncOpenAI:
@@ -63,6 +65,11 @@ class ReviewResult(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class TeacherAnswer(BaseModel):
+    answer: str
+    sources: list[str]
+
+
 def image_content(path: str, mime_type: str) -> dict:
     if mime_type == "application/pdf":
         document = fitz.open(path)
@@ -109,4 +116,19 @@ Current reason: {current_reason}
 Teacher comment: {teacher_comment}
 Use the original image as ground evidence. Return a suggested score between zero and the maximum, concise evidence-backed reasoning, and exact evidence quotes. Do not calculate totals and do not change any stored score."""
     response = await openai_client.responses.parse(model=MODEL, input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=ReviewResult)
+    return response.output_parsed
+
+
+async def answer_teacher_question(question: str, concept_statistics: list[dict]) -> TeacherAnswer:
+    openai_client = client()
+    prompt = f"""You are PRISM's grounded teacher assistance operation ({TEACHER_CHAT_VERSION}).
+Answer the teacher's question using only the supplied class statistics. Do not invent student traits, motivation, intelligence, cheating, or facts not provided. Give a concise instructional recommendation when appropriate.
+Teacher question: {question}
+Class statistics: {json.dumps(concept_statistics)}
+Return the names of the statistics you used in sources."""
+    response = await openai_client.responses.parse(
+        model=MODEL,
+        input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+        text_format=TeacherAnswer,
+    )
     return response.output_parsed

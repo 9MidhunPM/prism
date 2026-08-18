@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from . import database
-from .ai import PerceptionResult, grade_criterion, perceive_page, review_criterion
+from .ai import PerceptionResult, answer_teacher_question, grade_criterion, perceive_page, review_criterion
 from .auth import create_session, hash_password, read_session, verify_password
 from .models import (AIArtifact, Answer, ClassCohort, CriterionEvaluation, EvaluationEvidence, Exam,
                      EvidenceRegion, ProcessingJob, Question, ReviewSuggestion, RubricCriterion, Student, Submission,
@@ -493,11 +493,12 @@ def analytics(exam_id: str, teacher: dict = Depends(current_teacher)):
 
 
 @app.post("/api/assistant/query")
-def assistant_query(payload: AssistantQuery, teacher: dict = Depends(current_teacher)):
+async def assistant_query(payload: AssistantQuery, teacher: dict = Depends(current_teacher)):
     with session() as db:
         concepts = {}
         for ev, criterion in concept_rows(db, teacher["id"]):
             name = criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized"; bucket = concepts.setdefault(name, [0, 0]); bucket[0] += ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks; bucket[1] += criterion.max_marks
         sources = [{"name": name, "mastery": round(score / maximum * 100) if maximum else 0} for name, (score, maximum) in sorted(concepts.items(), key=lambda item: item[1][0] / item[1][1] if item[1][1] else 0)]
     if not settings.openai_enabled: return {"answer": "Add OPENAI_API_KEY to enable grounded Luna answers. PRISM has prepared the relevant class concept statistics but will not fabricate an AI response.", "sources": sources[:3], "ai_enabled": False}
-    return {"answer": "Teacher chat is configured for Luna and will be enabled with the dedicated chat operation in the next processing release.", "sources": sources[:3], "ai_enabled": True}
+    answer = await answer_teacher_question(payload.question, sources)
+    return {"answer": answer.answer, "sources": [source for source in sources if source["name"] in answer.sources], "ai_enabled": True}
