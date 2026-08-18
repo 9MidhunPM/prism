@@ -3,12 +3,19 @@
 import Link from "next/link";
 import { DragEvent, useEffect, useState } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+const API = "/api";
 const IMAGE_TYPES = ["image/jpeg", "image/png"];
 const PDF_TYPE = "application/pdf";
 const MAX_IMAGE_PAGES = 10;
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
-const STAGES = ["uploaded", "preprocessing", "transcribing", "grading", "review_required", "completed"];
+const STAGES = [
+  "uploaded",
+  "preprocessing",
+  "transcribing",
+  "grading",
+  "review_required",
+  "completed",
+];
 
 function stageLabel(stage?: string) {
   return (stage ?? "uploaded").replaceAll("_", " ");
@@ -18,7 +25,11 @@ function fileSize(size: number) {
   return `${(size / 1024 / 1024).toFixed(size > 10 * 1024 * 1024 ? 0 : 1)} MB`;
 }
 
-export default function ExamPage({ params }: { params: Promise<{ id: string }> }) {
+export default function ExamPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   const [exam, setExam] = useState<any>(null);
   const [error, setError] = useState("");
   const [studentName, setStudentName] = useState("");
@@ -30,18 +41,32 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
-    params.then(({ id }) => fetch(`${API}/exams/${id}`, { credentials: "include" })
-      .then((response) => response.ok ? response.json() : Promise.reject())
-      .then(setExam)
-      .catch(() => setError("This assessment could not be loaded. Sign in and try again.")));
+    params.then(({ id }) =>
+      fetch(`${API}/exams/${id}`, { credentials: "include" })
+        .then((response) => (response.ok ? response.json() : Promise.reject()))
+        .then(setExam)
+        .catch(() =>
+          setError(
+            "This assessment could not be loaded. Sign in and try again.",
+          ),
+        ),
+    );
   }, [params]);
 
   useEffect(() => {
-    if (!submission || ["completed", "review_required", "failed"].includes(submission.status)) return;
+    if (
+      !submission ||
+      ["completed", "review_required", "failed"].includes(submission.status)
+    )
+      return;
     const timer = window.setInterval(async () => {
       const [submissionResponse, statusResponse] = await Promise.all([
-        fetch(`${API}/submissions/${submission.id}`, { credentials: "include" }),
-        fetch(`${API}/submissions/${submission.id}/status`, { credentials: "include" }),
+        fetch(`${API}/submissions/${submission.id}`, {
+          credentials: "include",
+        }),
+        fetch(`${API}/submissions/${submission.id}/status`, {
+          credentials: "include",
+        }),
       ]);
       if (submissionResponse.ok) setSubmission(await submissionResponse.json());
       if (statusResponse.ok) setProcessing(await statusResponse.json());
@@ -54,7 +79,11 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
     const nextPages = Array.from(nextFiles);
     if (!nextPages.length) return;
 
-    if (nextPages.some((page) => !IMAGE_TYPES.includes(page.type) && page.type !== PDF_TYPE)) {
+    if (
+      nextPages.some(
+        (page) => !IMAGE_TYPES.includes(page.type) && page.type !== PDF_TYPE,
+      )
+    ) {
       setUploadError("Choose JPEG, PNG, or PDF files only.");
       return;
     }
@@ -64,15 +93,22 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
       return;
     }
     if (pages.length && (pages[0].type === PDF_TYPE || hasPdf)) {
-      setUploadError("Remove the current paper before switching between a PDF and image pages.");
+      setUploadError(
+        "Remove the current paper before switching between a PDF and image pages.",
+      );
       return;
     }
     const updatedPages = [...pages, ...nextPages];
     if (updatedPages.length > MAX_IMAGE_PAGES) {
-      setUploadError(`A paper can contain up to ${MAX_IMAGE_PAGES} image pages.`);
+      setUploadError(
+        `A paper can contain up to ${MAX_IMAGE_PAGES} image pages.`,
+      );
       return;
     }
-    if (updatedPages.reduce((total, page) => total + page.size, 0) > MAX_TOTAL_BYTES) {
+    if (
+      updatedPages.reduce((total, page) => total + page.size, 0) >
+      MAX_TOTAL_BYTES
+    ) {
       setUploadError("All pages together must be smaller than 20 MB.");
       return;
     }
@@ -88,22 +124,30 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
   function movePage(index: number, direction: -1 | 1) {
     setPages((currentPages) => {
       const destination = index + direction;
-      if (destination < 0 || destination >= currentPages.length) return currentPages;
+      if (destination < 0 || destination >= currentPages.length)
+        return currentPages;
       const updatedPages = [...currentPages];
-      [updatedPages[index], updatedPages[destination]] = [updatedPages[destination], updatedPages[index]];
+      [updatedPages[index], updatedPages[destination]] = [
+        updatedPages[destination],
+        updatedPages[index],
+      ];
       return updatedPages;
     });
   }
 
   function removePage(index: number) {
-    setPages((currentPages) => currentPages.filter((_, pageIndex) => pageIndex !== index));
+    setPages((currentPages) =>
+      currentPages.filter((_, pageIndex) => pageIndex !== index),
+    );
   }
 
   async function upload(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setUploadError("");
     if (!studentName.trim() || !pages.length) {
-      setUploadError("Add the student name and select their paper pages before uploading.");
+      setUploadError(
+        "Add the student name and select their paper pages before uploading.",
+      );
       return;
     }
     setUploading(true);
@@ -111,40 +155,343 @@ export default function ExamPage({ params }: { params: Promise<{ id: string }> }
     form.set("student_name", studentName.trim());
     pages.forEach((page) => form.append("pages", page));
     try {
-      const response = await fetch(`${API}/exams/${exam.id}/submissions`, { method: "POST", credentials: "include", body: form });
+      const response = await fetch(`${API}/exams/${exam.id}/submissions`, {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
       const body = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(body?.detail ?? "The paper could not be uploaded.");
+      if (!response.ok)
+        throw new Error(body?.detail ?? "The paper could not be uploaded.");
       setSubmission(body);
-      const statusResponse = await fetch(`${API}/submissions/${body.id}/status`, { credentials: "include" });
+      const statusResponse = await fetch(
+        `${API}/submissions/${body.id}/status`,
+        { credentials: "include" },
+      );
       if (statusResponse.ok) setProcessing(await statusResponse.json());
     } catch (reason) {
-      setUploadError(reason instanceof Error ? reason.message : "The paper could not be uploaded.");
+      setUploadError(
+        reason instanceof Error
+          ? reason.message
+          : "The paper could not be uploaded.",
+      );
     } finally {
       setUploading(false);
     }
   }
 
-  if (error) return <main className="min-h-screen bg-[#e8edf0] p-6 text-[#13252c]"><div className="mx-auto max-w-xl rounded-2xl bg-white p-8 shadow-[0_18px_45px_rgba(21,43,51,.12)]"><h1 className="text-2xl font-semibold">Assessment unavailable</h1><p className="mt-3 text-[#49616a]">{error}</p><Link href="/login" className="mt-6 inline-flex rounded-lg bg-[#0f5864] px-4 py-2 text-sm font-semibold text-white">Open sign in</Link></div></main>;
-  if (!exam) return <main className="grid min-h-screen place-items-center bg-[#e8edf0] text-[#49616a]">Loading assessment…</main>;
+  if (error)
+    return (
+      <main className="min-h-screen bg-[#e8edf0] p-6 text-[#13252c]">
+        <div className="mx-auto max-w-xl rounded-2xl bg-white p-8 shadow-[0_18px_45px_rgba(21,43,51,.12)]">
+          <h1 className="text-2xl font-semibold">Assessment unavailable</h1>
+          <p className="mt-3 text-[#49616a]">{error}</p>
+          <Link
+            href="/login"
+            className="mt-6 inline-flex rounded-lg bg-[#0f5864] px-4 py-2 text-sm font-semibold text-white"
+          >
+            Open sign in
+          </Link>
+        </div>
+      </main>
+    );
+  if (!exam)
+    return (
+      <main className="grid min-h-screen place-items-center bg-[#e8edf0] text-[#49616a]">
+        Loading assessment…
+      </main>
+    );
 
   const currentStage = processing?.stage ?? submission?.status;
   const stageIndex = STAGES.indexOf(currentStage);
-  return <main className="min-h-screen bg-[#e8edf0] text-[#13252c]">
-    <header className="border-b border-[#13252c]/10 bg-white px-5 py-4 sm:px-8"><div className="mx-auto flex max-w-6xl items-center justify-between gap-4"><Link href="/" className="text-xl font-bold tracking-tight text-[#0f5864]">PRISM</Link><div className="flex items-center gap-4"><span className="hidden text-sm text-[#49616a] sm:block">{exam.subject}</span><Link href="/exams/new" className="text-sm font-semibold text-[#0f5864]">New assessment</Link></div></div></header>
-    <section className="mx-auto max-w-6xl px-5 py-8 sm:px-8">
-      <div className="flex flex-col justify-between gap-4 border-b border-[#13252c]/12 pb-7 sm:flex-row sm:items-end"><div><h1 className="max-w-3xl text-3xl font-semibold tracking-[-0.03em] sm:text-4xl">{exam.title}</h1><p className="mt-2 text-[#49616a]">{exam.subject}{exam.date ? ` · ${exam.date}` : ""} · {exam.questions.length} questions</p></div><span className="rounded-full bg-[#d5ebe8] px-4 py-2 text-sm font-semibold text-[#075462]">{exam.total_marks} total marks</span></div>
-      <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,.85fr)]">
-        <section className="rounded-2xl bg-white p-5 shadow-[0_18px_45px_rgba(21,43,51,.1)] sm:p-7"><h2 className="text-2xl font-semibold tracking-[-0.02em]">Add a student paper</h2><p className="mt-2 max-w-xl text-sm leading-6 text-[#49616a]">Upload a photographed or scanned answer sheet. PRISM preserves the original, normalizes each page, then uses it alongside the transcription during grading.</p>
-          <form onSubmit={upload} className="mt-7 space-y-5"><label className="block text-sm font-semibold text-[#25454e]">Student name<input value={studentName} onChange={(event) => setStudentName(event.target.value)} className="input mt-2" placeholder="e.g. Arun Patel" autoComplete="name" /></label>
-            <div onDrop={drop} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} className={`rounded-xl border-2 border-dashed p-7 text-center transition ${dragging ? "border-[#0f5864] bg-[#e6f4f1]" : "border-[#b9c8cc] bg-[#f7faf9]"}`}><input id="paper-pages" className="sr-only" type="file" accept="image/jpeg,image/png,application/pdf" multiple onChange={(event) => { addPages(event.target.files ?? []); event.target.value = ""; }} /><input id="camera-page" className="sr-only" type="file" accept="image/jpeg,image/png" capture="environment" onChange={(event) => { addPages(event.target.files ?? []); event.target.value = ""; }} /><span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-[#d5ebe8] text-xl text-[#0f5864]">↑</span><strong className="mt-3 block text-sm">Drop paper pages here</strong><span className="mt-1 block text-sm text-[#49616a]">One PDF, or 1–10 JPEG/PNG pages · 20 MB total</span><div className="mt-4 flex flex-wrap justify-center gap-2"><label htmlFor="paper-pages" className="cursor-pointer rounded-lg border border-[#0f5864] bg-white px-3 py-2 text-sm font-semibold text-[#0f5864] hover:bg-[#e6f4f1]">Browse files</label><label htmlFor="camera-page" className="cursor-pointer rounded-lg border border-[#0f5864] bg-white px-3 py-2 text-sm font-semibold text-[#0f5864] hover:bg-[#e6f4f1]">Add camera page</label></div></div>
-            {pages.length > 0 && <section aria-label="Selected paper pages" className="overflow-hidden rounded-xl border border-[#c7d7d9]"><div className="flex items-center justify-between bg-[#e6f4f1] px-4 py-3 text-sm"><strong>{pages[0].type === PDF_TYPE ? "PDF paper" : `${pages.length} image page${pages.length === 1 ? "" : "s"}`}</strong><span className="text-[#49616a]">{fileSize(pages.reduce((total, page) => total + page.size, 0))} total</span></div><ol className="divide-y divide-[#d8e3e4]">{pages.map((page, index) => <li key={`${page.name}-${page.lastModified}-${page.size}-${index}`} className="flex items-center gap-3 px-4 py-3 text-sm"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#d5ebe8] text-xs font-bold text-[#075462]">{index + 1}</span><div className="min-w-0 flex-1"><strong className="block truncate">{page.name}</strong><span className="text-[#49616a]">{page.type === PDF_TYPE ? "PDF document" : "Image page"} · {fileSize(page.size)}</span></div><div className="flex shrink-0 gap-1"><button type="button" onClick={() => movePage(index, -1)} disabled={index === 0} aria-label={`Move ${page.name} up`} className="rounded-md px-2 py-1 font-semibold text-[#0f5864] hover:bg-[#e6f4f1] disabled:cursor-not-allowed disabled:opacity-35">Up</button><button type="button" onClick={() => movePage(index, 1)} disabled={index === pages.length - 1} aria-label={`Move ${page.name} down`} className="rounded-md px-2 py-1 font-semibold text-[#0f5864] hover:bg-[#e6f4f1] disabled:cursor-not-allowed disabled:opacity-35">Down</button><button type="button" onClick={() => removePage(index)} aria-label={`Remove ${page.name}`} className="rounded-md px-2 py-1 font-semibold text-[#0f5864] hover:bg-[#e6f4f1]">Remove</button></div></li>)}</ol></section>}
-            {uploadError && <p role="alert" className="rounded-xl bg-[#fff0e9] px-4 py-3 text-sm text-[#9b3e23]">{uploadError}</p>}
-            <button disabled={uploading} type="submit" className="w-full rounded-xl bg-[#0f5864] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#0b4650] disabled:cursor-not-allowed disabled:opacity-60">{uploading ? "Uploading paper…" : "Upload and begin assessment"}</button>
-          </form>
-          {submission && <section className="mt-7 border-t border-[#13252c]/10 pt-6"><div className="flex items-center justify-between gap-4"><div><h3 className="font-semibold">{submission.student_name ?? studentName}</h3><p className="mt-1 text-sm text-[#49616a]">{submission.page_count ?? (pages[0]?.type === PDF_TYPE ? "Multi-page" : pages.length)} page paper</p></div><span className="rounded-full bg-[#eef3f4] px-3 py-1 text-xs font-bold uppercase tracking-wide text-[#0f5864]">{stageLabel(currentStage)}</span></div><ol className="mt-5 grid grid-cols-3 gap-2 sm:grid-cols-6">{STAGES.map((stage, index) => <li key={stage} className="text-center"><span className={`mx-auto block h-2 rounded-full ${index <= stageIndex ? "bg-[#0f5864]" : "bg-[#d6e0e2]"}`} /><span className="mt-2 block text-[10px] font-semibold uppercase tracking-wide text-[#49616a]">{stageLabel(stage)}</span></li>)}</ol>{processing?.error && <p className="mt-4 rounded-xl bg-[#fff0e9] px-4 py-3 text-sm text-[#9b3e23]">{processing.error}</p>}{["completed", "review_required"].includes(submission.status) && <Link href={`/submissions/${submission.id}`} className="mt-5 inline-flex rounded-lg border border-[#0f5864] px-4 py-2 text-sm font-semibold text-[#0f5864] hover:bg-[#e6f4f1]">Open evidence review</Link>}</section>}
-        </section>
-        <aside className="lg:pt-1"><h2 className="text-lg font-semibold">Marking plan</h2><p className="mt-1 text-sm text-[#49616a]">The rubric below remains the grading source of truth.</p><div className="mt-4 divide-y divide-[#13252c]/10 rounded-2xl bg-white px-5 shadow-[0_18px_45px_rgba(21,43,51,.08)]">{exam.questions.map((question: any) => <article key={question.id} className="py-5"><div className="flex justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[.14em] text-[#0f5864]">{question.number}</p><h3 className="mt-1 font-semibold leading-5">{question.text}</h3></div><span className="shrink-0 text-sm font-semibold text-[#49616a]">{question.max_marks}</span></div><ul className="mt-3 space-y-2">{question.criteria.map((criterion: any) => <li key={criterion.id} className="text-sm text-[#49616a]"><span className="font-medium text-[#25454e]">{criterion.title}</span> · {criterion.max_marks} marks</li>)}</ul></article>)}</div></aside>
-      </div>
-    </section>
-  </main>;
+  return (
+    <main className="min-h-screen bg-[#e8edf0] text-[#13252c]">
+      <header className="border-b border-[#13252c]/10 bg-white px-5 py-4 sm:px-8">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
+          <Link
+            href="/"
+            className="text-xl font-bold tracking-tight text-[#0f5864]"
+          >
+            PRISM
+          </Link>
+          <div className="flex items-center gap-4">
+            <span className="hidden text-sm text-[#49616a] sm:block">
+              {exam.subject}
+            </span>
+            <Link
+              href="/exams/new"
+              className="text-sm font-semibold text-[#0f5864]"
+            >
+              New assessment
+            </Link>
+          </div>
+        </div>
+      </header>
+      <section className="mx-auto max-w-6xl px-5 py-8 sm:px-8">
+        <div className="flex flex-col justify-between gap-4 border-b border-[#13252c]/12 pb-7 sm:flex-row sm:items-end">
+          <div>
+            <h1 className="max-w-3xl text-3xl font-semibold tracking-[-0.03em] sm:text-4xl">
+              {exam.title}
+            </h1>
+            <p className="mt-2 text-[#49616a]">
+              {exam.subject}
+              {exam.date ? ` · ${exam.date}` : ""} · {exam.questions.length}{" "}
+              questions
+            </p>
+          </div>
+          <span className="rounded-full bg-[#d5ebe8] px-4 py-2 text-sm font-semibold text-[#075462]">
+            {exam.total_marks} total marks
+          </span>
+        </div>
+        <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,.85fr)]">
+          <section className="rounded-2xl bg-white p-5 shadow-[0_18px_45px_rgba(21,43,51,.1)] sm:p-7">
+            <h2 className="text-2xl font-semibold tracking-[-0.02em]">
+              Add a student paper
+            </h2>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-[#49616a]">
+              Upload a photographed or scanned answer sheet. PRISM preserves the
+              original, normalizes each page, then uses it alongside the
+              transcription during grading.
+            </p>
+            <form onSubmit={upload} className="mt-7 space-y-5">
+              <label className="block text-sm font-semibold text-[#25454e]">
+                Student name
+                <input
+                  value={studentName}
+                  onChange={(event) => setStudentName(event.target.value)}
+                  className="input mt-2"
+                  placeholder="e.g. Arun Patel"
+                  autoComplete="name"
+                />
+              </label>
+              <div
+                onDrop={drop}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setDragging(true);
+                }}
+                onDragLeave={() => setDragging(false)}
+                className={`rounded-xl border-2 border-dashed p-7 text-center transition ${dragging ? "border-[#0f5864] bg-[#e6f4f1]" : "border-[#b9c8cc] bg-[#f7faf9]"}`}
+              >
+                <input
+                  id="paper-pages"
+                  className="sr-only"
+                  type="file"
+                  accept="image/jpeg,image/png,application/pdf"
+                  multiple
+                  onChange={(event) => {
+                    addPages(event.target.files ?? []);
+                    event.target.value = "";
+                  }}
+                />
+                <input
+                  id="camera-page"
+                  className="sr-only"
+                  type="file"
+                  accept="image/jpeg,image/png"
+                  capture="environment"
+                  onChange={(event) => {
+                    addPages(event.target.files ?? []);
+                    event.target.value = "";
+                  }}
+                />
+                <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-[#d5ebe8] text-xl text-[#0f5864]">
+                  ↑
+                </span>
+                <strong className="mt-3 block text-sm">
+                  Drop paper pages here
+                </strong>
+                <span className="mt-1 block text-sm text-[#49616a]">
+                  One PDF, or 1–10 JPEG/PNG pages · 20 MB total
+                </span>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  <label
+                    htmlFor="paper-pages"
+                    className="cursor-pointer rounded-lg border border-[#0f5864] bg-white px-3 py-2 text-sm font-semibold text-[#0f5864] hover:bg-[#e6f4f1]"
+                  >
+                    Browse files
+                  </label>
+                  <label
+                    htmlFor="camera-page"
+                    className="cursor-pointer rounded-lg border border-[#0f5864] bg-white px-3 py-2 text-sm font-semibold text-[#0f5864] hover:bg-[#e6f4f1]"
+                  >
+                    Add camera page
+                  </label>
+                </div>
+              </div>
+              {pages.length > 0 && (
+                <section
+                  aria-label="Selected paper pages"
+                  className="overflow-hidden rounded-xl border border-[#c7d7d9]"
+                >
+                  <div className="flex items-center justify-between bg-[#e6f4f1] px-4 py-3 text-sm">
+                    <strong>
+                      {pages[0].type === PDF_TYPE
+                        ? "PDF paper"
+                        : `${pages.length} image page${pages.length === 1 ? "" : "s"}`}
+                    </strong>
+                    <span className="text-[#49616a]">
+                      {fileSize(
+                        pages.reduce((total, page) => total + page.size, 0),
+                      )}{" "}
+                      total
+                    </span>
+                  </div>
+                  <ol className="divide-y divide-[#d8e3e4]">
+                    {pages.map((page, index) => (
+                      <li
+                        key={`${page.name}-${page.lastModified}-${page.size}-${index}`}
+                        className="flex items-center gap-3 px-4 py-3 text-sm"
+                      >
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#d5ebe8] text-xs font-bold text-[#075462]">
+                          {index + 1}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <strong className="block truncate">
+                            {page.name}
+                          </strong>
+                          <span className="text-[#49616a]">
+                            {page.type === PDF_TYPE
+                              ? "PDF document"
+                              : "Image page"}{" "}
+                            · {fileSize(page.size)}
+                          </span>
+                        </div>
+                        <div className="flex shrink-0 gap-1">
+                          <button
+                            type="button"
+                            onClick={() => movePage(index, -1)}
+                            disabled={index === 0}
+                            aria-label={`Move ${page.name} up`}
+                            className="rounded-md px-2 py-1 font-semibold text-[#0f5864] hover:bg-[#e6f4f1] disabled:cursor-not-allowed disabled:opacity-35"
+                          >
+                            Up
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => movePage(index, 1)}
+                            disabled={index === pages.length - 1}
+                            aria-label={`Move ${page.name} down`}
+                            className="rounded-md px-2 py-1 font-semibold text-[#0f5864] hover:bg-[#e6f4f1] disabled:cursor-not-allowed disabled:opacity-35"
+                          >
+                            Down
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removePage(index)}
+                            aria-label={`Remove ${page.name}`}
+                            className="rounded-md px-2 py-1 font-semibold text-[#0f5864] hover:bg-[#e6f4f1]"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+              )}
+              {uploadError && (
+                <p
+                  role="alert"
+                  className="rounded-xl bg-[#fff0e9] px-4 py-3 text-sm text-[#9b3e23]"
+                >
+                  {uploadError}
+                </p>
+              )}
+              <button
+                disabled={uploading}
+                type="submit"
+                className="w-full rounded-xl bg-[#0f5864] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#0b4650] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {uploading ? "Uploading paper…" : "Upload and begin assessment"}
+              </button>
+            </form>
+            {submission && (
+              <section className="mt-7 border-t border-[#13252c]/10 pt-6">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <h3 className="font-semibold">
+                      {submission.student_name ?? studentName}
+                    </h3>
+                    <p className="mt-1 text-sm text-[#49616a]">
+                      {submission.page_count ??
+                        (pages[0]?.type === PDF_TYPE
+                          ? "Multi-page"
+                          : pages.length)}{" "}
+                      page paper
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-[#eef3f4] px-3 py-1 text-xs font-bold uppercase tracking-wide text-[#0f5864]">
+                    {stageLabel(currentStage)}
+                  </span>
+                </div>
+                <ol className="mt-5 grid grid-cols-3 gap-2 sm:grid-cols-6">
+                  {STAGES.map((stage, index) => (
+                    <li key={stage} className="text-center">
+                      <span
+                        className={`mx-auto block h-2 rounded-full ${index <= stageIndex ? "bg-[#0f5864]" : "bg-[#d6e0e2]"}`}
+                      />
+                      <span className="mt-2 block text-[10px] font-semibold uppercase tracking-wide text-[#49616a]">
+                        {stageLabel(stage)}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+                {processing?.error && (
+                  <p className="mt-4 rounded-xl bg-[#fff0e9] px-4 py-3 text-sm text-[#9b3e23]">
+                    {processing.error}
+                  </p>
+                )}
+                {["completed", "review_required"].includes(
+                  submission.status,
+                ) && (
+                  <Link
+                    href={`/submissions/${submission.id}`}
+                    className="mt-5 inline-flex rounded-lg border border-[#0f5864] px-4 py-2 text-sm font-semibold text-[#0f5864] hover:bg-[#e6f4f1]"
+                  >
+                    Open evidence review
+                  </Link>
+                )}
+              </section>
+            )}
+          </section>
+          <aside className="lg:pt-1">
+            <h2 className="text-lg font-semibold">Marking plan</h2>
+            <p className="mt-1 text-sm text-[#49616a]">
+              The rubric below remains the grading source of truth.
+            </p>
+            <div className="mt-4 divide-y divide-[#13252c]/10 rounded-2xl bg-white px-5 shadow-[0_18px_45px_rgba(21,43,51,.08)]">
+              {exam.questions.map((question: any) => (
+                <article key={question.id} className="py-5">
+                  <div className="flex justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[.14em] text-[#0f5864]">
+                        {question.number}
+                      </p>
+                      <h3 className="mt-1 font-semibold leading-5">
+                        {question.text}
+                      </h3>
+                    </div>
+                    <span className="shrink-0 text-sm font-semibold text-[#49616a]">
+                      {question.max_marks}
+                    </span>
+                  </div>
+                  <ul className="mt-3 space-y-2">
+                    {question.criteria.map((criterion: any) => (
+                      <li key={criterion.id} className="text-sm text-[#49616a]">
+                        <span className="font-medium text-[#25454e]">
+                          {criterion.title}
+                        </span>{" "}
+                        · {criterion.max_marks} marks
+                      </li>
+                    ))}
+                  </ul>
+                </article>
+              ))}
+            </div>
+          </aside>
+        </div>
+      </section>
+    </main>
+  );
 }

@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+import { AccountControl } from "@/components/account-control";
+import { api } from "@/lib/api";
 
 type Profile = {
   student: { name: string; identifier: string };
@@ -41,15 +41,10 @@ export default function StudentPortal() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`${API}/student/profile`, { credentials: "include" }),
-      fetch(`${API}/student/submissions`, { credentials: "include" }),
+      api.get<Profile>("/api/student/profile"),
+      api.get<Submission[]>("/api/student/submissions"),
     ])
-      .then(async ([profileResponse, submissionsResponse]) => {
-        if (!profileResponse.ok || !submissionsResponse.ok) throw new Error();
-        const [nextProfile, nextSubmissions] = await Promise.all([
-          profileResponse.json(),
-          submissionsResponse.json(),
-        ]);
+      .then(([nextProfile, nextSubmissions]) => {
         setProfile(nextProfile);
         setSubmissions(nextSubmissions);
       })
@@ -67,7 +62,12 @@ export default function StudentPortal() {
           <Link href="/student" className="font-serif text-2xl font-bold">
             PRISM
           </Link>
-          <span className="text-sm text-[#566164]">Your assessment record</span>
+          <div className="flex items-center gap-4">
+            <span className="hidden text-sm text-[#566164] sm:inline">
+              Your assessment record
+            </span>
+            <AccountControl />
+          </div>
         </div>
       </header>
       <section className="mx-auto max-w-5xl px-5 py-8 sm:px-8">

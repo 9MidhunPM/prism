@@ -9,9 +9,9 @@ def test_runtime_model_router_allows_configured_openai_models():
 
 
 def test_production_requires_a_secure_session_and_postgres():
-    settings = Settings(app_env="production", session_secret="production-secret", session_cookie_secure=True, database_url="postgresql+psycopg://prism:prism@db:5432/prism")
+    settings = Settings(app_env="production", session_secret="production-secret-that-is-long-enough-123", session_cookie_secure=True, database_url="postgresql+psycopg://prism:prism@db:5432/prism")
     settings.validate_production()
 
-    insecure = Settings(app_env="production", session_secret="production-secret", session_cookie_secure=False, database_url="postgresql+psycopg://prism:prism@db:5432/prism")
+    insecure = Settings(app_env="production", session_secret="production-secret-that-is-long-enough-123", session_cookie_secure=False, database_url="postgresql+psycopg://prism:prism@db:5432/prism")
     with pytest.raises(ValueError):
         insecure.validate_production()

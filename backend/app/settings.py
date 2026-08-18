@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     demo_student_name: str | None = None
     demo_student_email: str | None = None
     demo_student_password: SecretStr | None = None
+    enable_http_bootstrap: bool = False
+    bootstrap_token: SecretStr | None = None
 
     database_url: str = "sqlite:///./data/prism.db"
 
@@ -82,10 +84,14 @@ class Settings(BaseSettings):
             return
         if self.session_secret.get_secret_value() == "development-only-secret":
             raise ValueError("SESSION_SECRET must be set in production")
+        if self.session_secret.get_secret_value() in {"replace-with-a-long-random-value", "change-me"} or len(self.session_secret.get_secret_value()) < 32:
+            raise ValueError("SESSION_SECRET must be a strong random value in production")
         if not self.session_cookie_secure:
             raise ValueError("SESSION_COOKIE_SECURE must be true in production")
         if not self.database_url.startswith("postgresql+"):
             raise ValueError("DATABASE_URL must use PostgreSQL in production")
+        if self.enable_http_bootstrap and (not self.bootstrap_token or len(self.bootstrap_token.get_secret_value()) < 32):
+            raise ValueError("BOOTSTRAP_TOKEN must be set when HTTP bootstrap is enabled")
 
 
 @lru_cache

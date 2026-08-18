@@ -4,12 +4,12 @@ import hashlib
 import io
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
 import fitz
-from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from PIL import Image, ImageOps
@@ -19,9 +19,9 @@ from sqlalchemy import func, select, text
 from . import database
 from .ai import (EXAM_IMPORT_VERSION, PerceptionResult, answer_teacher_question,
                  grade_criterion, import_exam_pages, model_for, perceive_page, review_criterion)
-from .auth import create_session, hash_password, read_session_data, verify_password
+from .auth import hash_password, random_token, token_hash, verify_password
 from .demo import seed_demo_accounts
-from .models import (AIArtifact, Account, AccountRole, Answer, ClassCohort, CriterionEvaluation, EvaluationEvidence, Exam,
+from .models import (AIArtifact, Account, AccountRole, Answer, AuthSession, ClassCohort, CriterionEvaluation, EvaluationEvidence, Exam,
                      EvidenceRegion, ProcessingJob, Question, ReviewSuggestion, RubricCriterion, Student, Submission,
                      SubmissionPage, SubmissionStatus, Teacher, TeacherOverride)
 from .settings import get_settings
@@ -144,12 +144,12 @@ def imported_draft(result) -> dict:
 
 
 def current_account(session_token: str | None = Cookie(default=None, alias="prism_session")) -> dict:
-    session_data = read_session_data(session_token, settings.session_secret.get_secret_value())
-    if not session_data:
+    if not session_token:
         raise HTTPException(401, "Sign in to continue.")
     with session() as db:
-        account = db.get(Account, session_data["sub"])
-        if not account or account.role.value != session_data["role"]:
+        active_session = db.scalar(select(AuthSession).where(AuthSession.token_hash == token_hash(session_token), AuthSession.revoked_at.is_(None), AuthSession.expires_at > datetime.now(timezone.utc)))
+        account = db.get(Account, active_session.account_id) if active_session else None
+        if not account:
             raise HTTPException(401, "Sign in to continue.")
         return {"id": account.id, "role": account.role.value, "teacher_id": account.teacher_id, "student_id": account.student_id, "email": account.email}
 
@@ -175,7 +175,13 @@ def current_student(account: dict = Depends(current_account)) -> dict:
 
 
 def set_session(response: Response, account: Account) -> None:
-    response.set_cookie("prism_session", create_session(account.id, settings.session_secret.get_secret_value(), settings.session_ttl_seconds, account.role.value), max_age=settings.session_ttl_seconds, httponly=True, secure=settings.session_cookie_secure, samesite="lax", path="/")
+    token = random_token()
+    csrf_token = random_token()
+    with session() as db:
+        db.add(AuthSession(account_id=account.id, token_hash=token_hash(token), csrf_hash=token_hash(csrf_token), expires_at=datetime.now(timezone.utc) + timedelta(seconds=settings.session_ttl_seconds)))
+        db.commit()
+    response.set_cookie("prism_session", token, max_age=settings.session_ttl_seconds, httponly=True, secure=settings.session_cookie_secure, samesite="lax", path="/")
+    response.set_cookie("prism_csrf", csrf_token, max_age=settings.session_ttl_seconds, httponly=False, secure=settings.session_cookie_secure, samesite="lax", path="/")
 
 
 def owned_exam(db, exam_id: str, teacher_id: str) -> Exam:
@@ -337,6 +343,18 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list, allow_origin_regex=r"http://localhost:\d+", allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
 
 
+@app.middleware("http")
+async def csrf_protection(request: Request, call_next):
+    if request.method in {"GET", "HEAD", "OPTIONS"} or request.url.path in {"/api/auth/login", "/api/auth/bootstrap", "/api/health", "/api/health/ready"}:
+        return await call_next(request)
+    origin = request.headers.get("origin")
+    if origin and origin not in settings.cors_origin_list:
+        return Response(status_code=403, content='{"detail":"Untrusted request origin."}', media_type="application/json")
+    if request.headers.get("sec-fetch-site") == "cross-site":
+        return Response(status_code=403, content='{"detail":"Cross-site requests are not allowed."}', media_type="application/json")
+    return await call_next(request)
+
+
 @app.get("/api/health")
 def health(): return {"status": "ok", "model": MODEL, "ai_enabled": settings.openai_enabled}
 
@@ -352,7 +370,12 @@ def readiness():
 
 
 @app.post("/api/auth/bootstrap", status_code=201)
-def bootstrap_teacher(payload: TeacherCredentials, response: Response):
+def bootstrap_teacher(payload: TeacherCredentials, response: Response, bootstrap_token: str | None = Header(default=None, alias="X-Bootstrap-Token")):
+    if settings.app_env == "production":
+        if not settings.enable_http_bootstrap:
+            raise HTTPException(403, "HTTP bootstrap is disabled.")
+        if not settings.bootstrap_token or not bootstrap_token or token_hash(bootstrap_token) != token_hash(settings.bootstrap_token.get_secret_value()):
+            raise HTTPException(403, "Invalid bootstrap token.")
     if not payload.name: raise HTTPException(422, "A teacher name is required.")
     with session() as db:
         if db.scalar(select(Teacher.id).limit(1)): raise HTTPException(403, "Teacher setup is already complete. Sign in instead.")
@@ -380,7 +403,15 @@ def login(payload: TeacherCredentials, response: Response):
 
 
 @app.post("/api/auth/logout", status_code=204)
-def logout(response: Response): response.delete_cookie("prism_session", path="/")
+def logout(response: Response, session_token: str | None = Cookie(default=None, alias="prism_session")):
+    if session_token:
+        with session() as db:
+            active_session = db.scalar(select(AuthSession).where(AuthSession.token_hash == token_hash(session_token), AuthSession.revoked_at.is_(None)))
+            if active_session:
+                active_session.revoked_at = datetime.now(timezone.utc)
+                db.commit()
+    response.delete_cookie("prism_session", path="/")
+    response.delete_cookie("prism_csrf", path="/")
 
 
 @app.get("/api/auth/me")

@@ -1,8 +1,8 @@
 from fastapi import HTTPException, Response
 
-from app.auth import read_session, read_session_data
-from app.main import TeacherCredentials, bootstrap_teacher, current_account, current_student, current_teacher, login, own_submission, own_submissions
-from app.models import Account, AccountRole, ClassCohort, Exam, Student, Submission
+from app.auth import token_hash
+from app.main import TeacherCredentials, bootstrap_teacher, current_account, current_student, current_teacher, login, logout, own_submission, own_submissions, set_session
+from app.models import Account, AccountRole, AuthSession, ClassCohort, Exam, Student, Submission
 from app.demo import seed_demo_accounts
 from app.settings import Settings
 from app import database
@@ -14,15 +14,24 @@ def test_teacher_bootstrap_and_login_create_valid_session(isolated_database):
     bootstrap_response = Response()
     teacher = bootstrap_teacher(TeacherCredentials(name="A Teacher", email="Teacher@example.com", password="a-secure-password"), bootstrap_response)
     token = bootstrap_response.headers["set-cookie"].split("prism_session=", 1)[1].split(";", 1)[0]
-    session = read_session_data(token, main.settings.session_secret.get_secret_value())
-    assert read_session(token, main.settings.session_secret.get_secret_value()) == session["sub"]
-    assert session["role"] == "teacher"
+    with database.SessionLocal() as db:
+        auth_session = db.query(AuthSession).filter_by(token_hash=token_hash(token)).one()
+        assert auth_session.account_id == current_account(token)["id"]
+        assert auth_session.revoked_at is None
     assert current_teacher(current_account(token))["email"] == "teacher@example.com"
 
     login_response = Response()
     logged_in = login(TeacherCredentials(email="teacher@example.com", password="a-secure-password"), login_response)
     assert logged_in["id"] == teacher["id"]
     assert logged_in["role"] == "teacher"
+
+    logout(Response(), token)
+    try:
+        current_account(token)
+    except HTTPException as exc:
+        assert exc.status_code == 401
+    else:
+        raise AssertionError("A logged out token must not remain usable.")
 
 
 def test_teacher_bootstrap_is_available_only_once(isolated_database):
@@ -54,7 +63,9 @@ def test_student_session_cannot_resolve_a_teacher_identity(isolated_database):
         db.add_all([own, other])
         account = Account(email="student@example.com", password_hash="not-used", role=AccountRole.STUDENT, student_id=student.id)
         db.add(account); db.commit()
-        token = main.create_session(account.id, main.settings.session_secret.get_secret_value(), main.settings.session_ttl_seconds, "student")
+        response = Response()
+        set_session(response, account)
+        token = response.headers["set-cookie"].split("prism_session=", 1)[1].split(";", 1)[0]
 
     student_identity = current_student(current_account(token))
     assert student_identity["id"] == student.id

@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+import { useSession } from "@/components/session-provider";
+import { api } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { refresh } = useSession();
   const [mode, setMode] = useState<"login" | "setup">("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -19,28 +20,25 @@ export default function LoginPage() {
     event.preventDefault();
     setSaving(true);
     setError("");
-    const response = await fetch(
-      `${API}/auth/${mode === "setup" ? "bootstrap" : "login"}`,
-      {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: mode === "setup" ? name : undefined,
-          email,
-          password,
-        }),
-      },
-    );
-    if (response.ok) {
-      const account = await response.json();
+    try {
+      await api.post(`/api/auth/${mode === "setup" ? "bootstrap" : "login"}`, {
+        name: mode === "setup" ? name : undefined,
+        email,
+        password,
+      });
+      const account = await refresh();
+      if (!account) throw new Error("Your session could not be verified.");
       router.replace(account.role === "student" ? "/student" : "/");
       router.refresh();
-    } else {
-      const body = await response.json().catch(() => null);
-      setError(body?.detail ?? "We could not sign you in. Please try again.");
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : "We could not sign you in. Please try again.",
+      );
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   }
 
   return (

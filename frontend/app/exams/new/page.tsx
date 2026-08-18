@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+const API = "/api";
 
 type Criterion = {
   title: string;
@@ -11,7 +11,12 @@ type Criterion = {
   max_marks: string;
   concept: string;
 };
-type Question = { number: string; text: string; visible_max_marks?: string; criteria: Criterion[] };
+type Question = {
+  number: string;
+  text: string;
+  visible_max_marks?: string;
+  criteria: Criterion[];
+};
 
 const blankCriterion = (): Criterion => ({
   title: "",
@@ -88,20 +93,37 @@ export default function NewExamPage() {
     const form = new FormData();
     form.set("file", file);
     try {
-      const response = await fetch(`${API}/exam-drafts/import`, { method: "POST", credentials: "include", body: form });
+      const response = await fetch(`${API}/exam-drafts/import`, {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
       const draft = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(draft?.detail ?? "The question paper could not be imported.");
+      if (!response.ok)
+        throw new Error(
+          draft?.detail ?? "The question paper could not be imported.",
+        );
       setTitle(draft.title ?? "");
       setSubject(draft.subject ?? "");
-      setQuestions(draft.questions.map((question: any) => ({
-        number: question.number,
-        text: question.text,
-        visible_max_marks: question.max_marks == null ? "" : String(question.max_marks),
-        criteria: question.criteria.map((criterion: any) => ({ ...criterion, max_marks: String(criterion.max_marks) })),
-      })));
+      setQuestions(
+        draft.questions.map((question: any) => ({
+          number: question.number,
+          text: question.text,
+          visible_max_marks:
+            question.max_marks == null ? "" : String(question.max_marks),
+          criteria: question.criteria.map((criterion: any) => ({
+            ...criterion,
+            max_marks: String(criterion.max_marks),
+          })),
+        })),
+      );
       setImportWarnings(draft.warnings ?? []);
     } catch (reason) {
-      setImportError(reason instanceof Error ? reason.message : "The question paper could not be imported.");
+      setImportError(
+        reason instanceof Error
+          ? reason.message
+          : "The question paper could not be imported.",
+      );
     } finally {
       setImporting(false);
     }
@@ -214,15 +236,52 @@ export default function NewExamPage() {
           </p>
         )}
         <section className="mb-6 rounded-lg border border-[#0f5864]/20 bg-[#eef7f5] p-5">
-          <h2 className="text-lg font-semibold text-[#153e46]">Start from a question paper</h2>
-          <p className="mt-1 text-sm leading-6 text-[#49616a]">Upload a scanned or photographed paper. PRISM extracts a draft of visible questions and suggests rubric criteria for you to review before saving.</p>
+          <h2 className="text-lg font-semibold text-[#153e46]">
+            Start from a question paper
+          </h2>
+          <p className="mt-1 text-sm leading-6 text-[#49616a]">
+            Upload a scanned or photographed paper. PRISM extracts a draft of
+            visible questions and suggests rubric criteria for you to review
+            before saving.
+          </p>
           <label className="mt-4 flex cursor-pointer items-center justify-between gap-4 rounded-md border border-dashed border-[#5d8d95] bg-white px-4 py-4 text-sm hover:bg-[#f6fbfa]">
-            <span><strong className="block text-[#153e46]">{importing ? "Reading question paper…" : "Choose a JPEG, PNG, or PDF"}</strong><span className="text-[#49616a]">The existing form will be replaced by an editable draft.</span></span>
-            <span className="rounded-md bg-[#0f5864] px-3 py-2 font-medium text-white">Browse</span>
-            <input className="sr-only" type="file" accept="image/jpeg,image/png,application/pdf" capture="environment" disabled={importing} onChange={(event) => importQuestionPaper(event.target.files?.[0])} />
+            <span>
+              <strong className="block text-[#153e46]">
+                {importing
+                  ? "Reading question paper…"
+                  : "Choose a JPEG, PNG, or PDF"}
+              </strong>
+              <span className="text-[#49616a]">
+                The existing form will be replaced by an editable draft.
+              </span>
+            </span>
+            <span className="rounded-md bg-[#0f5864] px-3 py-2 font-medium text-white">
+              Browse
+            </span>
+            <input
+              className="sr-only"
+              type="file"
+              accept="image/jpeg,image/png,application/pdf"
+              capture="environment"
+              disabled={importing}
+              onChange={(event) => importQuestionPaper(event.target.files?.[0])}
+            />
           </label>
-          {importError && <p role="alert" className="mt-3 text-sm text-[#9b3e23]">{importError}</p>}
-          {importWarnings.length > 0 && <div className="mt-4 rounded-md bg-[#fff7e7] p-4 text-sm text-[#7a4b12]"><strong>Review before saving</strong><ul className="mt-2 list-disc space-y-1 pl-5">{importWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
+          {importError && (
+            <p role="alert" className="mt-3 text-sm text-[#9b3e23]">
+              {importError}
+            </p>
+          )}
+          {importWarnings.length > 0 && (
+            <div className="mt-4 rounded-md bg-[#fff7e7] p-4 text-sm text-[#7a4b12]">
+              <strong>Review before saving</strong>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {importWarnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
         <section className="mb-6 grid gap-4 rounded-lg border border-[#172126]/10 bg-[#fcfaf5] p-5 sm:grid-cols-3">
           <Field label="Exam title">
@@ -297,7 +356,13 @@ export default function NewExamPage() {
                       min="0"
                       step="0.5"
                       value={question.visible_max_marks ?? ""}
-                      onChange={(event) => updateQuestion(questionIndex, "visible_max_marks", event.target.value)}
+                      onChange={(event) =>
+                        updateQuestion(
+                          questionIndex,
+                          "visible_max_marks",
+                          event.target.value,
+                        )
+                      }
                       className="input"
                       placeholder="Not shown"
                     />

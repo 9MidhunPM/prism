@@ -29,6 +29,14 @@ def verify_password(password: str, encoded: str) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
+def random_token() -> str:
+    return base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
+
+
+def token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 def create_session(account_id: str, secret: str, ttl_seconds: int, role: str = "teacher") -> str:
     payload = base64.urlsafe_b64encode(json.dumps({"sub": account_id, "role": role, "exp": int(time.time()) + ttl_seconds}).encode()).decode().rstrip("=")
     signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
