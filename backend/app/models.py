@@ -1,0 +1,168 @@
+"""Normalized PRISM persistence models. AI data is auditable and teacher decisions are immutable history."""
+
+from __future__ import annotations
+
+import enum
+import uuid
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from .database import Base
+
+
+def identifier() -> str:
+    return str(uuid.uuid4())
+
+
+class SubmissionStatus(str, enum.Enum):
+    UPLOADED = "uploaded"
+    PREPROCESSING = "preprocessing"
+    TRANSCRIBING = "transcribing"
+    STRUCTURED = "structured"
+    GRADING = "grading"
+    REVIEW_REQUIRED = "review_required"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class Teacher(Base):
+    __tablename__ = "teachers"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    name: Mapped[str] = mapped_column(String(120))
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+
+
+class ClassCohort(Base):
+    __tablename__ = "classes"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+
+
+class Student(Base):
+    __tablename__ = "students"
+    __table_args__ = (UniqueConstraint("class_id", "identifier", name="uq_student_class_identifier"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    class_id: Mapped[str] = mapped_column(ForeignKey("classes.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    identifier: Mapped[str] = mapped_column(String(100))
+
+
+class Exam(Base):
+    __tablename__ = "exams"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
+    class_id: Mapped[str | None] = mapped_column(ForeignKey("classes.id"), nullable=True)
+    title: Mapped[str] = mapped_column(String(255))
+    subject: Mapped[str] = mapped_column(String(120))
+    course: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    total_marks: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Question(Base):
+    __tablename__ = "questions"
+    __table_args__ = (UniqueConstraint("exam_id", "number", name="uq_question_exam_number"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    exam_id: Mapped[str] = mapped_column(ForeignKey("exams.id"), index=True)
+    number: Mapped[str] = mapped_column(String(30))
+    text: Mapped[str] = mapped_column(Text)
+    max_marks: Mapped[float] = mapped_column(Float)
+    concept_tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+
+class RubricCriterion(Base):
+    __tablename__ = "rubric_criteria"
+    __table_args__ = (UniqueConstraint("question_id", "code", name="uq_criterion_question_code"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    question_id: Mapped[str] = mapped_column(ForeignKey("questions.id"), index=True)
+    code: Mapped[str] = mapped_column(String(30))
+    title: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str] = mapped_column(Text)
+    max_marks: Mapped[float] = mapped_column(Float)
+    concept_tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+
+class Submission(Base):
+    __tablename__ = "submissions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    exam_id: Mapped[str] = mapped_column(ForeignKey("exams.id"), index=True)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id"), index=True)
+    status: Mapped[SubmissionStatus] = mapped_column(Enum(SubmissionStatus), default=SubmissionStatus.UPLOADED)
+    total_score: Mapped[float] = mapped_column(Float, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SubmissionPage(Base):
+    __tablename__ = "submission_pages"
+    __table_args__ = (UniqueConstraint("submission_id", "page_number", name="uq_page_submission_number"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    submission_id: Mapped[str] = mapped_column(ForeignKey("submissions.id"), index=True)
+    page_number: Mapped[int] = mapped_column(Integer)
+    original_key: Mapped[str] = mapped_column(String(512))
+    processed_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    image_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class Answer(Base):
+    __tablename__ = "answers"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    submission_id: Mapped[str] = mapped_column(ForeignKey("submissions.id"), index=True)
+    question_id: Mapped[str | None] = mapped_column(ForeignKey("questions.id"), nullable=True, index=True)
+    page_id: Mapped[str] = mapped_column(ForeignKey("submission_pages.id"), index=True)
+    transcription: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    uncertainty: Mapped[list[dict]] = mapped_column(JSON, default=list)
+
+
+class EvidenceRegion(Base):
+    __tablename__ = "evidence_regions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    answer_id: Mapped[str] = mapped_column(ForeignKey("answers.id"), index=True)
+    page_id: Mapped[str] = mapped_column(ForeignKey("submission_pages.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bbox: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class CriterionEvaluation(Base):
+    __tablename__ = "criterion_evaluations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    answer_id: Mapped[str] = mapped_column(ForeignKey("answers.id"), index=True)
+    criterion_id: Mapped[str] = mapped_column(ForeignKey("rubric_criteria.id"), index=True)
+    ai_marks: Mapped[float] = mapped_column(Float)
+    teacher_marks: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reason: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class TeacherOverride(Base):
+    __tablename__ = "teacher_overrides"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    evaluation_id: Mapped[str] = mapped_column(ForeignKey("criterion_evaluations.id"), index=True)
+    teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"))
+    previous_marks: Mapped[float] = mapped_column(Float)
+    new_marks: Mapped[float] = mapped_column(Float)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AIArtifact(Base):
+    __tablename__ = "ai_artifacts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    submission_id: Mapped[str | None] = mapped_column(ForeignKey("submissions.id"), nullable=True, index=True)
+    operation: Mapped[str] = mapped_column(String(50))
+    model: Mapped[str] = mapped_column(String(50))
+    prompt_version: Mapped[str] = mapped_column(String(50))
+    input_hash: Mapped[str] = mapped_column(String(64), index=True)
+    output: Mapped[dict] = mapped_column(JSON)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
