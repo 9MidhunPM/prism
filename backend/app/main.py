@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
-import shutil
 import sqlite3
 import uuid
 from contextlib import asynccontextmanager
@@ -14,6 +14,8 @@ from typing import Literal
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+import fitz
+from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 from .ai import grade_criterion, perceive_page
 from .settings import get_settings
@@ -55,6 +57,39 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS reviews (id TEXT PRIMARY KEY, evaluation_id TEXT NOT NULL, suggested_marks REAL NOT NULL, reason TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS overrides (id TEXT PRIMARY KEY, evaluation_id TEXT NOT NULL, previous_marks REAL NOT NULL, new_marks REAL NOT NULL, reason TEXT, created_at TEXT NOT NULL);
         """)
+        columns = {row["name"] for row in con.execute("PRAGMA table_info(pages)")}
+        for name, definition in {"processed_path": "TEXT", "width": "INTEGER", "height": "INTEGER", "image_hash": "TEXT"}.items():
+            if name not in columns:
+                con.execute(f"ALTER TABLE pages ADD COLUMN {name} {definition}")
+
+
+def normalize_pages(original_path: Path, mime_type: str) -> list[dict]:
+    """Create conservative, correctly oriented PNGs without modifying originals."""
+    processed_dir = UPLOADS / "processed"
+    processed_dir.mkdir(exist_ok=True)
+    images: list[Image.Image] = []
+    if mime_type == "application/pdf":
+        with fitz.open(original_path) as document:
+            if not document or len(document) > settings.max_submission_pages:
+                raise HTTPException(422, f"Submissions may contain up to {settings.max_submission_pages} pages.")
+            for page in document:
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+                with Image.open(io.BytesIO(pixmap.tobytes("png"))) as rendered:
+                    images.append(rendered.copy())
+    else:
+        try:
+            with Image.open(original_path) as source:
+                images = [source.copy()]
+        except OSError as exc:
+            raise HTTPException(422, "The uploaded image could not be decoded.") from exc
+    normalized = []
+    for page_number, image in enumerate(images, 1):
+        image = ImageOps.exif_transpose(image).convert("RGB")
+        image.thumbnail((settings.max_image_dimension, settings.max_image_dimension))
+        processed_path = processed_dir / f"{original_path.stem}-page-{page_number}.jpg"
+        image.save(processed_path, "JPEG", quality=settings.processed_image_quality, optimize=True)
+        normalized.append({"page_number": page_number, "processed_path": str(processed_path), "width": image.width, "height": image.height, "image_hash": hashlib.sha256(processed_path.read_bytes()).hexdigest()})
+    return normalized
 
 
 class CriterionInput(BaseModel):
@@ -160,14 +195,14 @@ async def process_submission(submission_id: str) -> None:
         pages = con.execute("SELECT * FROM pages WHERE submission_id=?", (submission_id,)).fetchall()
     try:
         # A missing key is recoverable: seeded submissions keep the demo usable offline.
-        if not os.environ.get("OPENAI_API_KEY"):
+        if not settings.openai_enabled:
             raise RuntimeError("OPENAI_API_KEY is required for live Luna processing. Demo submissions remain available.")
         with connection() as con:
             con.execute("UPDATE submissions SET status='transcribing' WHERE id=?", (submission_id,))
             exam_id = con.execute("SELECT exam_id FROM submissions WHERE id=?", (submission_id,)).fetchone()["exam_id"]
             questions = con.execute("SELECT * FROM questions WHERE exam_id=?", (exam_id,)).fetchall()
         page = pages[0]
-        perception = await perceive_page(page["original_path"], page["mime_type"], [q["number"] for q in questions])
+        perception = await perceive_page(page["processed_path"] or page["original_path"], "image/jpeg" if page["processed_path"] else page["mime_type"], [q["number"] for q in questions])
         with connection() as con:
             con.execute("INSERT INTO ai_artifacts VALUES (?, ?, 'perception', 'perception_v1', ?, ?, ?)", (str(uuid.uuid4()), submission_id, hashlib.sha256(Path(page["original_path"]).read_bytes()).hexdigest(), perception.model_dump_json(), now()))
             for answer in perception.answers:
@@ -181,7 +216,7 @@ async def process_submission(submission_id: str) -> None:
             with connection() as con:
                 criteria = con.execute("SELECT * FROM criteria WHERE question_id=?", (question["id"],)).fetchall()
             for criterion in criteria:
-                result = await grade_criterion(page["original_path"], page["mime_type"], question["text"], dict(criterion), matching.transcription)
+                result = await grade_criterion(page["processed_path"] or page["original_path"], "image/jpeg" if page["processed_path"] else page["mime_type"], question["text"], dict(criterion), matching.transcription)
                 marks = min(criterion["max_marks"], max(0, result.awarded_marks))
                 evidence = [{"page": page["page_number"], "quote": quote} for quote in result.evidence_quotes]
                 with connection() as con:
@@ -243,13 +278,14 @@ async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, stu
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(415, "Upload a JPEG, PNG, or PDF file.")
     contents = await file.read()
-    if len(contents) > 20 * 1024 * 1024:
-        raise HTTPException(413, "Files must be smaller than 20 MB.")
+    if len(contents) > settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(413, f"Files must be smaller than {settings.max_upload_mb} MB.")
     if not contents:
         raise HTTPException(400, "The uploaded file is empty.")
     extension = {"image/jpeg": ".jpg", "image/png": ".png", "application/pdf": ".pdf"}[file.content_type]
     path = UPLOADS / f"{uuid.uuid4()}{extension}"
     path.write_bytes(contents)
+    pages = normalize_pages(path, file.content_type)
     with connection() as con:
         student = con.execute("SELECT * FROM students WHERE name=?", (student_name,)).fetchone()
         student_id = student["id"] if student else str(uuid.uuid4())
@@ -257,7 +293,8 @@ async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, stu
             con.execute("INSERT INTO students VALUES (?, ?, ?)", (student_id, student_name, f"UP-{student_id[:6]}"))
         submission_id = str(uuid.uuid4())
         con.execute("INSERT INTO submissions VALUES (?, ?, ?, 'uploaded', 0, ?, NULL)", (submission_id, exam_id, student_id, now()))
-        con.execute("INSERT INTO pages VALUES (?, ?, 1, ?, ?)", (str(uuid.uuid4()), submission_id, str(path), file.content_type))
+        for page in pages:
+            con.execute("INSERT INTO pages (id, submission_id, page_number, original_path, mime_type, processed_path, width, height, image_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (str(uuid.uuid4()), submission_id, page["page_number"], str(path), file.content_type, page["processed_path"], page["width"], page["height"], page["image_hash"]))
     background_tasks.add_task(process_submission, submission_id)
     return {"id": submission_id, "status": "uploaded"}
 
@@ -268,7 +305,7 @@ def get_submission(submission_id: str):
         submission = con.execute("""SELECT s.*, st.name student_name, e.title exam_title, e.id exam_id FROM submissions s JOIN students st ON st.id=s.student_id JOIN exams e ON e.id=s.exam_id WHERE s.id=?""", (submission_id,)).fetchone()
         if not submission:
             raise HTTPException(404, "Submission not found")
-        pages = [dict(row) for row in con.execute("SELECT id, page_number FROM pages WHERE submission_id=?", (submission_id,))]
+        pages = [dict(row) for row in con.execute("SELECT id, page_number, width, height FROM pages WHERE submission_id=?", (submission_id,))]
         evaluations = [dict(row) for row in con.execute("""SELECT ev.*, c.title criterion_title, c.description criterion_description, c.max_marks, c.concept, q.number question_number, q.text question_text FROM evaluations ev JOIN criteria c ON c.id=ev.criterion_id JOIN questions q ON q.id=c.question_id WHERE ev.submission_id=? ORDER BY q.number""", (submission_id,))]
         for item in evaluations:
             item["evidence"] = json.loads(item["evidence"])
