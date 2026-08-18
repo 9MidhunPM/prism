@@ -11,13 +11,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import fitz
 from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 from .ai import PerceptionResult, grade_criterion, perceive_page, review_criterion
+from .auth import create_session, hash_password, read_session, verify_password
 from .settings import get_settings
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,6 +47,7 @@ def init_db() -> None:
     with connection() as con:
         con.executescript("""
         CREATE TABLE IF NOT EXISTS exams (id TEXT PRIMARY KEY, title TEXT NOT NULL, subject TEXT NOT NULL, date TEXT, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS teachers (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS questions (id TEXT PRIMARY KEY, exam_id TEXT NOT NULL, number TEXT NOT NULL, text TEXT NOT NULL, max_marks REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS criteria (id TEXT PRIMARY KEY, question_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, max_marks REAL NOT NULL, concept TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS students (id TEXT PRIMARY KEY, name TEXT NOT NULL, identifier TEXT NOT NULL);
@@ -134,6 +136,35 @@ class OverrideInput(BaseModel):
 
 class AssistantQuery(BaseModel):
     question: str = Field(min_length=3, max_length=1000)
+
+
+class TeacherCredentials(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=12, max_length=256)
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+
+
+def current_teacher(session: str | None = Cookie(default=None, alias="prism_session")) -> dict:
+    teacher_id = read_session(session, settings.session_secret.get_secret_value())
+    if not teacher_id:
+        raise HTTPException(401, "Sign in to continue.")
+    with connection() as con:
+        teacher = con.execute("SELECT id, name, email FROM teachers WHERE id=?", (teacher_id,)).fetchone()
+    if not teacher:
+        raise HTTPException(401, "Sign in to continue.")
+    return dict(teacher)
+
+
+def set_session(response: Response, teacher_id: str) -> None:
+    response.set_cookie(
+        "prism_session",
+        create_session(teacher_id, settings.session_secret.get_secret_value(), settings.session_ttl_seconds),
+        max_age=settings.session_ttl_seconds,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
 
 
 def exam_detail(exam_id: str) -> dict:
@@ -270,6 +301,42 @@ app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list, allo
 @app.get("/api/health")
 def health():
     return {"status": "ok", "model": MODEL, "ai_enabled": settings.openai_enabled}
+
+
+@app.post("/api/auth/bootstrap", status_code=201)
+def bootstrap_teacher(payload: TeacherCredentials, response: Response):
+    if not payload.name:
+        raise HTTPException(422, "A teacher name is required.")
+    with connection() as con:
+        if con.execute("SELECT 1 FROM teachers LIMIT 1").fetchone():
+            raise HTTPException(403, "Teacher setup is already complete. Sign in instead.")
+        teacher_id = str(uuid.uuid4())
+        con.execute(
+            "INSERT INTO teachers VALUES (?, ?, ?, ?, ?)",
+            (teacher_id, payload.name.strip(), payload.email.strip().lower(), hash_password(payload.password), now()),
+        )
+    set_session(response, teacher_id)
+    return {"id": teacher_id, "name": payload.name.strip(), "email": payload.email.strip().lower()}
+
+
+@app.post("/api/auth/login")
+def login(payload: TeacherCredentials, response: Response):
+    with connection() as con:
+        teacher = con.execute("SELECT * FROM teachers WHERE email=?", (payload.email.strip().lower(),)).fetchone()
+    if not teacher or not verify_password(payload.password, teacher["password_hash"]):
+        raise HTTPException(401, "Invalid email or password.")
+    set_session(response, teacher["id"])
+    return {"id": teacher["id"], "name": teacher["name"], "email": teacher["email"]}
+
+
+@app.post("/api/auth/logout", status_code=204)
+def logout(response: Response):
+    response.delete_cookie("prism_session", path="/")
+
+
+@app.get("/api/auth/me")
+def me(teacher: dict = Depends(current_teacher)):
+    return teacher
 
 
 @app.get("/api/dashboard")
