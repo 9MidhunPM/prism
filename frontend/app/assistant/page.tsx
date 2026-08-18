@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
+import { AppShell } from "@/components/app-shell";
 
 const API = "/api";
 
@@ -28,27 +28,21 @@ export default function AssistantPage() {
     setLoading(false);
   }
   return (
-    <main className="min-h-screen bg-[#f5f1e9] text-[#172126]">
-      <header className="border-b border-[#172126]/10 bg-[#fcfaf5] px-5 py-4">
-        <div className="mx-auto flex max-w-3xl justify-between">
-          <Link href="/" className="font-serif text-2xl font-bold">
-            PRISM
-          </Link>
-          <span className="text-sm text-[#667174]">
-            Grounded assessment chat
-          </span>
+    <AppShell>
+      <section className="mx-auto max-w-3xl">
+        <div className="border-b border-[var(--line)] pb-7">
+          <h1 className="font-serif text-4xl font-semibold tracking-[-0.035em]">
+            Ask about assessment evidence
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-[var(--ink-muted)]">
+            PRISM retrieves relevant assessment data first. It does not use a
+            general chatbot context.
+          </p>
         </div>
-      </header>
-      <section className="mx-auto max-w-3xl px-5 py-8">
-        <p className="text-sm text-[#667174]">Teacher assistant</p>
-        <h1 className="font-serif text-3xl font-semibold">
-          Ask about assessment evidence
-        </h1>
-        <p className="mt-2 text-sm text-[#566164]">
-          PRISM retrieves relevant assessment data first. It does not use a
-          general chatbot context.
-        </p>
-        <form onSubmit={ask} className="mt-6 flex gap-3">
+        <form
+          onSubmit={ask}
+          className="surface mt-7 flex flex-col gap-3 p-4 sm:flex-row"
+        >
           <input
             aria-label="Assessment question"
             value={question}
@@ -59,7 +53,7 @@ export default function AssistantPage() {
           <button
             type="submit"
             disabled={loading}
-            className="rounded-md bg-[#173f4c] px-4 py-2 text-sm font-medium text-white"
+            className="button-primary shrink-0"
           >
             {loading ? "Checking..." : "Ask"}
           </button>
@@ -67,18 +61,20 @@ export default function AssistantPage() {
         {error && (
           <p
             role="alert"
-            className="mt-4 rounded-md bg-[#fff4e9] p-3 text-sm text-[#8b3d20]"
+            className="mt-4 rounded-lg bg-[var(--review-soft)] p-4 text-sm text-[var(--review)]"
           >
             {error}
           </p>
         )}
         {result && (
-          <section className="mt-6 rounded-lg border border-[#172126]/10 bg-[#fcfaf5] p-5">
-            <p className="text-sm leading-6 text-[#566164]">{result.answer}</p>
+          <section className="surface mt-6 p-6">
+            <p className="text-sm leading-7 text-[var(--ink-muted)]">
+              {result.answer}
+            </p>
             {result.sources?.length > 0 && (
-              <div className="mt-5 border-t border-[#172126]/10 pt-4">
+              <div className="mt-5 border-t border-[var(--line)] pt-4">
                 <h2 className="text-sm font-medium">Retrieved evidence</h2>
-                <ul className="mt-2 space-y-1 text-sm text-[#566164]">
+                <ul className="mt-2 space-y-1 text-sm text-[var(--ink-muted)]">
                   {result.sources.map((source: any) => (
                     <li key={source.name}>
                       {source.name}: {source.mastery}% mastery
@@ -90,6 +86,6 @@ export default function AssistantPage() {
           </section>
         )}
       </section>
-    </main>
+    </AppShell>
   );
 }

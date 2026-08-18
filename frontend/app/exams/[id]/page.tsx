@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { DragEvent, useEffect, useState } from "react";
+import { type DragEvent, useEffect, useState } from "react";
+import { AppShell } from "@/components/app-shell";
 
 const API = "/api";
 const IMAGE_TYPES = ["image/jpeg", "image/png"];
@@ -115,7 +116,7 @@ export default function ExamPage({
     setPages(updatedPages);
   }
 
-  function drop(event: DragEvent<HTMLDivElement>) {
+  function drop(event: DragEvent<HTMLFieldSetElement>) {
     event.preventDefault();
     setDragging(false);
     addPages(event.dataTransfer.files);
@@ -153,7 +154,9 @@ export default function ExamPage({
     setUploading(true);
     const form = new FormData();
     form.set("student_name", studentName.trim());
-    pages.forEach((page) => form.append("pages", page));
+    pages.forEach((page) => {
+      form.append("pages", page);
+    });
     try {
       const response = await fetch(`${API}/exams/${exam.id}/submissions`, {
         method: "POST",
@@ -205,50 +208,35 @@ export default function ExamPage({
   const currentStage = processing?.stage ?? submission?.status;
   const stageIndex = STAGES.indexOf(currentStage);
   return (
-    <main className="min-h-screen bg-[#e8edf0] text-[#13252c]">
-      <header className="border-b border-[#13252c]/10 bg-white px-5 py-4 sm:px-8">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
-          <Link
-            href="/"
-            className="text-xl font-bold tracking-tight text-[#0f5864]"
-          >
-            PRISM
-          </Link>
-          <div className="flex items-center gap-4">
-            <span className="hidden text-sm text-[#49616a] sm:block">
-              {exam.subject}
-            </span>
-            <Link
-              href="/exams/new"
-              className="text-sm font-semibold text-[#0f5864]"
-            >
-              New assessment
-            </Link>
-          </div>
-        </div>
-      </header>
-      <section className="mx-auto max-w-6xl px-5 py-8 sm:px-8">
-        <div className="flex flex-col justify-between gap-4 border-b border-[#13252c]/12 pb-7 sm:flex-row sm:items-end">
+    <AppShell
+      actions={
+        <Link href="/exams/new" className="button-primary">
+          New assessment
+        </Link>
+      }
+    >
+      <section className="mx-auto max-w-6xl">
+        <div className="flex flex-col justify-between gap-4 border-b border-[var(--line)] pb-7 sm:flex-row sm:items-end">
           <div>
-            <h1 className="max-w-3xl text-3xl font-semibold tracking-[-0.03em] sm:text-4xl">
+            <h1 className="max-w-3xl font-serif text-4xl font-semibold tracking-[-0.035em]">
               {exam.title}
             </h1>
-            <p className="mt-2 text-[#49616a]">
+            <p className="mt-2 text-[var(--ink-muted)]">
               {exam.subject}
               {exam.date ? ` · ${exam.date}` : ""} · {exam.questions.length}{" "}
               questions
             </p>
           </div>
-          <span className="rounded-full bg-[#d5ebe8] px-4 py-2 text-sm font-semibold text-[#075462]">
+          <span className="status-pill bg-[var(--brand-soft)] text-[var(--brand-strong)]">
             {exam.total_marks} total marks
           </span>
         </div>
         <div className="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,.85fr)]">
-          <section className="rounded-2xl bg-white p-5 shadow-[0_18px_45px_rgba(21,43,51,.1)] sm:p-7">
-            <h2 className="text-2xl font-semibold tracking-[-0.02em]">
+          <section className="surface p-5 sm:p-7">
+            <h2 className="font-serif text-3xl font-semibold tracking-[-0.025em]">
               Add a student paper
             </h2>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-[#49616a]">
+            <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--ink-muted)]">
               Upload a photographed or scanned answer sheet. PRISM preserves the
               original, normalizes each page, then uses it alongside the
               transcription during grading.
@@ -264,14 +252,14 @@ export default function ExamPage({
                   autoComplete="name"
                 />
               </label>
-              <div
+              <fieldset
                 onDrop={drop}
                 onDragOver={(event) => {
                   event.preventDefault();
                   setDragging(true);
                 }}
                 onDragLeave={() => setDragging(false)}
-                className={`rounded-xl border-2 border-dashed p-7 text-center transition ${dragging ? "border-[#0f5864] bg-[#e6f4f1]" : "border-[#b9c8cc] bg-[#f7faf9]"}`}
+                className={`rounded-xl border-2 border-dashed p-7 text-center transition-colors duration-200 ${dragging ? "border-[var(--brand)] bg-[var(--brand-soft)]" : "border-[var(--line)] bg-[var(--surface-muted)]"}`}
               >
                 <input
                   id="paper-pages"
@@ -295,62 +283,62 @@ export default function ExamPage({
                     event.target.value = "";
                   }}
                 />
-                <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-[#d5ebe8] text-xl text-[#0f5864]">
-                  ↑
+                <span className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-[var(--brand-soft)] text-lg font-semibold text-[var(--brand)]">
+                  +
                 </span>
                 <strong className="mt-3 block text-sm">
                   Drop paper pages here
                 </strong>
-                <span className="mt-1 block text-sm text-[#49616a]">
+                <span className="mt-1 block text-sm text-[var(--ink-muted)]">
                   One PDF, or 1–10 JPEG/PNG pages · 20 MB total
                 </span>
                 <div className="mt-4 flex flex-wrap justify-center gap-2">
                   <label
                     htmlFor="paper-pages"
-                    className="cursor-pointer rounded-lg border border-[#0f5864] bg-white px-3 py-2 text-sm font-semibold text-[#0f5864] hover:bg-[#e6f4f1]"
+                    className="button-secondary cursor-pointer"
                   >
                     Browse files
                   </label>
                   <label
                     htmlFor="camera-page"
-                    className="cursor-pointer rounded-lg border border-[#0f5864] bg-white px-3 py-2 text-sm font-semibold text-[#0f5864] hover:bg-[#e6f4f1]"
+                    className="button-secondary cursor-pointer"
                   >
                     Add camera page
                   </label>
                 </div>
-              </div>
+              </fieldset>
               {pages.length > 0 && (
                 <section
                   aria-label="Selected paper pages"
-                  className="overflow-hidden rounded-xl border border-[#c7d7d9]"
+                  className="overflow-hidden rounded-xl border border-[var(--line)]"
                 >
-                  <div className="flex items-center justify-between bg-[#e6f4f1] px-4 py-3 text-sm">
+                  <div className="flex items-center justify-between bg-[var(--brand-soft)] px-4 py-3 text-sm">
                     <strong>
                       {pages[0].type === PDF_TYPE
                         ? "PDF paper"
                         : `${pages.length} image page${pages.length === 1 ? "" : "s"}`}
                     </strong>
-                    <span className="text-[#49616a]">
+                    <span className="text-[var(--ink-muted)]">
                       {fileSize(
                         pages.reduce((total, page) => total + page.size, 0),
                       )}{" "}
                       total
                     </span>
                   </div>
-                  <ol className="divide-y divide-[#d8e3e4]">
+                  <ol className="divide-y divide-[var(--line)]">
                     {pages.map((page, index) => (
                       <li
                         key={`${page.name}-${page.lastModified}-${page.size}-${index}`}
                         className="flex items-center gap-3 px-4 py-3 text-sm"
                       >
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#d5ebe8] text-xs font-bold text-[#075462]">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--brand-soft)] text-xs font-bold text-[var(--brand-strong)]">
                           {index + 1}
                         </span>
                         <div className="min-w-0 flex-1">
                           <strong className="block truncate">
                             {page.name}
                           </strong>
-                          <span className="text-[#49616a]">
+                          <span className="text-[var(--ink-muted)]">
                             {page.type === PDF_TYPE
                               ? "PDF document"
                               : "Image page"}{" "}
@@ -363,7 +351,7 @@ export default function ExamPage({
                             onClick={() => movePage(index, -1)}
                             disabled={index === 0}
                             aria-label={`Move ${page.name} up`}
-                            className="rounded-md px-2 py-1 font-semibold text-[#0f5864] hover:bg-[#e6f4f1] disabled:cursor-not-allowed disabled:opacity-35"
+                            className="button-quiet px-2 py-1 disabled:cursor-not-allowed disabled:opacity-35"
                           >
                             Up
                           </button>
@@ -372,7 +360,7 @@ export default function ExamPage({
                             onClick={() => movePage(index, 1)}
                             disabled={index === pages.length - 1}
                             aria-label={`Move ${page.name} down`}
-                            className="rounded-md px-2 py-1 font-semibold text-[#0f5864] hover:bg-[#e6f4f1] disabled:cursor-not-allowed disabled:opacity-35"
+                            className="button-quiet px-2 py-1 disabled:cursor-not-allowed disabled:opacity-35"
                           >
                             Down
                           </button>
@@ -380,7 +368,7 @@ export default function ExamPage({
                             type="button"
                             onClick={() => removePage(index)}
                             aria-label={`Remove ${page.name}`}
-                            className="rounded-md px-2 py-1 font-semibold text-[#0f5864] hover:bg-[#e6f4f1]"
+                            className="button-quiet px-2 py-1"
                           >
                             Remove
                           </button>
@@ -393,7 +381,7 @@ export default function ExamPage({
               {uploadError && (
                 <p
                   role="alert"
-                  className="rounded-xl bg-[#fff0e9] px-4 py-3 text-sm text-[#9b3e23]"
+                  className="rounded-xl bg-[var(--review-soft)] px-4 py-3 text-sm text-[var(--review)]"
                 >
                   {uploadError}
                 </p>
@@ -401,19 +389,19 @@ export default function ExamPage({
               <button
                 disabled={uploading}
                 type="submit"
-                className="w-full rounded-xl bg-[#0f5864] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#0b4650] disabled:cursor-not-allowed disabled:opacity-60"
+                className="button-primary w-full py-3"
               >
                 {uploading ? "Uploading paper…" : "Upload and begin assessment"}
               </button>
             </form>
             {submission && (
-              <section className="mt-7 border-t border-[#13252c]/10 pt-6">
+              <section className="mt-7 border-t border-[var(--line)] pt-6">
                 <div className="flex items-center justify-between gap-4">
                   <div>
                     <h3 className="font-semibold">
                       {submission.student_name ?? studentName}
                     </h3>
-                    <p className="mt-1 text-sm text-[#49616a]">
+                    <p className="mt-1 text-sm text-[var(--ink-muted)]">
                       {submission.page_count ??
                         (pages[0]?.type === PDF_TYPE
                           ? "Multi-page"
@@ -421,7 +409,7 @@ export default function ExamPage({
                       page paper
                     </p>
                   </div>
-                  <span className="rounded-full bg-[#eef3f4] px-3 py-1 text-xs font-bold uppercase tracking-wide text-[#0f5864]">
+                  <span className="status-pill status-neutral">
                     {stageLabel(currentStage)}
                   </span>
                 </div>
@@ -429,16 +417,16 @@ export default function ExamPage({
                   {STAGES.map((stage, index) => (
                     <li key={stage} className="text-center">
                       <span
-                        className={`mx-auto block h-2 rounded-full ${index <= stageIndex ? "bg-[#0f5864]" : "bg-[#d6e0e2]"}`}
+                        className={`mx-auto block h-2 rounded-full transition-colors duration-300 ${index <= stageIndex ? "bg-[var(--brand)]" : "bg-[var(--line)]"}`}
                       />
-                      <span className="mt-2 block text-[10px] font-semibold uppercase tracking-wide text-[#49616a]">
+                      <span className="mt-2 block text-[10px] font-semibold uppercase tracking-wide text-[var(--ink-muted)]">
                         {stageLabel(stage)}
                       </span>
                     </li>
                   ))}
                 </ol>
                 {processing?.error && (
-                  <p className="mt-4 rounded-xl bg-[#fff0e9] px-4 py-3 text-sm text-[#9b3e23]">
+                  <p className="mt-4 rounded-xl bg-[var(--review-soft)] px-4 py-3 text-sm text-[var(--review)]">
                     {processing.error}
                   </p>
                 )}
@@ -447,7 +435,7 @@ export default function ExamPage({
                 ) && (
                   <Link
                     href={`/submissions/${submission.id}`}
-                    className="mt-5 inline-flex rounded-lg border border-[#0f5864] px-4 py-2 text-sm font-semibold text-[#0f5864] hover:bg-[#e6f4f1]"
+                    className="button-secondary mt-5"
                   >
                     Open evidence review
                   </Link>
@@ -457,29 +445,32 @@ export default function ExamPage({
           </section>
           <aside className="lg:pt-1">
             <h2 className="text-lg font-semibold">Marking plan</h2>
-            <p className="mt-1 text-sm text-[#49616a]">
+            <p className="mt-1 text-sm text-[var(--ink-muted)]">
               The rubric below remains the grading source of truth.
             </p>
-            <div className="mt-4 divide-y divide-[#13252c]/10 rounded-2xl bg-white px-5 shadow-[0_18px_45px_rgba(21,43,51,.08)]">
+            <div className="surface mt-4 divide-y divide-[var(--line)] px-5">
               {exam.questions.map((question: any) => (
                 <article key={question.id} className="py-5">
                   <div className="flex justify-between gap-4">
                     <div>
-                      <p className="text-xs font-bold uppercase tracking-[.14em] text-[#0f5864]">
+                      <p className="text-xs font-bold uppercase tracking-[.14em] text-[var(--brand)]">
                         {question.number}
                       </p>
                       <h3 className="mt-1 font-semibold leading-5">
                         {question.text}
                       </h3>
                     </div>
-                    <span className="shrink-0 text-sm font-semibold text-[#49616a]">
+                    <span className="shrink-0 text-sm font-semibold text-[var(--ink-muted)]">
                       {question.max_marks}
                     </span>
                   </div>
                   <ul className="mt-3 space-y-2">
                     {question.criteria.map((criterion: any) => (
-                      <li key={criterion.id} className="text-sm text-[#49616a]">
-                        <span className="font-medium text-[#25454e]">
+                      <li
+                        key={criterion.id}
+                        className="text-sm text-[var(--ink-muted)]"
+                      >
+                        <span className="font-medium text-[var(--foreground)]">
                           {criterion.title}
                         </span>{" "}
                         · {criterion.max_marks} marks
@@ -492,6 +483,6 @@ export default function ExamPage({
           </aside>
         </div>
       </section>
-    </main>
+    </AppShell>
   );
 }

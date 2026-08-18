@@ -42,18 +42,18 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="grid min-h-screen bg-[#f5f1e9] px-5 py-8 text-[#172126] sm:place-items-center">
-      <section className="w-full max-w-md rounded-lg border border-[#173f4c]/15 bg-[#fcfaf5] p-6 shadow-[0_18px_50px_rgba(23,63,76,0.08)] sm:p-8">
-        <Link href="/" className="font-serif text-2xl font-bold">
+    <main className="grid min-h-screen bg-[var(--background)] px-5 py-8 text-[var(--foreground)] sm:place-items-center">
+      <section className="surface page-enter w-full max-w-md p-6 sm:p-8">
+        <Link
+          href="/"
+          className="font-serif text-2xl font-bold tracking-[-0.03em] text-[var(--brand-strong)]"
+        >
           PRISM
         </Link>
-        <p className="mt-6 text-sm font-medium text-[#173f4c]">
-          Teacher workspace
-        </p>
-        <h1 className="mt-1 font-serif text-3xl font-semibold">
+        <h1 className="mt-7 font-serif text-4xl font-semibold tracking-[-0.035em]">
           {mode === "setup" ? "Set up your account" : "Welcome back"}
         </h1>
-        <p className="mt-2 text-sm leading-6 text-[#566164]">
+        <p className="mt-3 text-sm leading-6 text-[var(--ink-muted)]">
           {mode === "setup"
             ? "Create the first teacher account for this PRISM workspace."
             : "Sign in to manage examinations and review evidence."}
@@ -97,14 +97,14 @@ export default function LoginPage() {
             />
           </label>
           {error && (
-            <p className="rounded-md bg-[#fff4e9] p-3 text-sm text-[#8b3d20]">
+            <p className="rounded-lg bg-[var(--review-soft)] p-3 text-sm text-[var(--review)]">
               {error}
             </p>
           )}
           <button
             disabled={saving}
             type="submit"
-            className="w-full rounded-md bg-[#173f4c] px-4 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+            className="button-primary w-full py-3"
           >
             {saving
               ? "Please wait"
@@ -119,7 +119,7 @@ export default function LoginPage() {
             setMode(mode === "setup" ? "login" : "setup");
             setError("");
           }}
-          className="mt-5 text-sm text-[#173f4c] underline underline-offset-4"
+          className="button-quiet mt-5 -ml-2"
         >
           {mode === "setup"
             ? "Already have an account? Sign in"

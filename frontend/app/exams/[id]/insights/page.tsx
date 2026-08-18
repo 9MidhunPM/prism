@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { AppShell } from "@/components/app-shell";
 
 const API = "/api";
 
@@ -125,33 +126,20 @@ export default function ExamInsightsPage({
   const reviewRate = metric(analytics, ["review_rate", "overall_review_rate"]);
 
   return (
-    <main className="min-h-screen bg-[#f5f1e9] text-[#172126]">
-      <header className="border-b border-[#172126]/10 bg-[#fcfaf5] px-5 py-4 sm:px-8">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
-          <Link href="/" className="font-serif text-2xl font-bold">
-            PRISM
-          </Link>
-          <div className="flex gap-4 text-sm">
-            <Link href="/exams" className="text-[#566164]">
-              All exams
-            </Link>
-            <Link
-              href={`/exams/${exam.id}`}
-              className="font-medium text-[#173f4c]"
-            >
-              Open exam
-            </Link>
-          </div>
-        </div>
-      </header>
-      <section className="mx-auto max-w-6xl px-5 py-8 sm:px-8">
-        <p className="text-sm text-[#667174]">Exam insights</p>
-        <div className="flex flex-col justify-between gap-4 border-b border-[#172126]/10 pb-7 sm:flex-row sm:items-end">
+    <AppShell
+      actions={
+        <Link href={`/exams/${exam.id}`} className="button-primary">
+          Open exam
+        </Link>
+      }
+    >
+      <section className="mx-auto max-w-6xl">
+        <div className="flex flex-col justify-between gap-4 border-b border-[var(--line)] pb-7 sm:flex-row sm:items-end">
           <div>
-            <h1 className="font-serif text-3xl font-semibold tracking-tight">
+            <h1 className="font-serif text-4xl font-semibold tracking-[-0.035em]">
               {exam.title}
             </h1>
-            <p className="mt-2 text-sm text-[#566164]">
+            <p className="mt-2 text-sm text-[var(--ink-muted)]">
               {exam.subject}
               {exam.date ? ` · ${exam.date}` : ""} ·{" "}
               {exam.questions?.length ?? 0} questions
@@ -161,7 +149,7 @@ export default function ExamInsightsPage({
             </p>
           </div>
         </div>
-        <div className="mt-7 grid gap-px overflow-hidden rounded-lg bg-[#172126]/10 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Metric
             label="Submissions"
             value={submissions === null ? "Not available" : String(submissions)}
@@ -181,18 +169,15 @@ export default function ExamInsightsPage({
         {concepts.length === 0 &&
           questions.length === 0 &&
           criteria.length === 0 && (
-            <section className="mt-7 rounded-lg border border-dashed border-[#172126]/20 bg-[#fcfaf5] p-7">
-              <h2 className="font-serif text-xl font-semibold">
+            <section className="surface-lined mt-7 p-7">
+              <h2 className="font-serif text-2xl font-semibold">
                 No evaluated data yet
               </h2>
-              <p className="mt-2 text-sm text-[#566164]">
+              <p className="mt-2 text-sm leading-6 text-[var(--ink-muted)]">
                 Upload and complete at least one student paper to see concept
                 performance and review signals here.
               </p>
-              <Link
-                href={`/exams/${exam.id}`}
-                className="mt-5 inline-block rounded-md bg-[#173f4c] px-4 py-2 text-sm font-medium text-white"
-              >
+              <Link href={`/exams/${exam.id}`} className="button-primary mt-5">
                 Upload a paper
               </Link>
             </section>
@@ -225,15 +210,17 @@ export default function ExamInsightsPage({
           />
         )}
       </section>
-    </main>
+    </AppShell>
   );
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-[#fcfaf5] p-5">
-      <p className="text-sm text-[#667174]">{label}</p>
-      <p className="mt-1 font-serif text-2xl font-semibold">{value}</p>
+    <div className="surface p-5">
+      <p className="text-sm font-medium text-[var(--ink-muted)]">{label}</p>
+      <p className="mt-1 font-serif text-2xl font-semibold tracking-[-0.02em]">
+        {value}
+      </p>
     </div>
   );
 }
@@ -249,9 +236,9 @@ function InsightTable({
 }) {
   return (
     <section className="mt-7">
-      <h2 className="mb-3 font-serif text-xl font-semibold">{title}</h2>
-      <div className="overflow-hidden rounded-lg border border-[#172126]/10 bg-[#fcfaf5]">
-        <div className="grid grid-cols-[1fr_auto_auto] gap-4 border-b border-[#172126]/10 px-5 py-3 text-xs uppercase tracking-wide text-[#667174]">
+      <h2 className="mb-3 font-serif text-2xl font-semibold">{title}</h2>
+      <div className="surface-lined overflow-hidden">
+        <div className="grid grid-cols-[minmax(9rem,1fr)_auto_auto] gap-4 border-b border-[var(--line)] px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--ink-muted)]">
           <span>Area</span>
           <span>Mastery</span>
           <span>Review rate</span>
@@ -268,14 +255,14 @@ function InsightTable({
           return (
             <div
               key={`${name(row)}-${index}`}
-              className="grid grid-cols-[1fr_auto_auto] gap-4 border-b border-[#172126]/8 px-5 py-4 text-sm last:border-0"
+              className="grid grid-cols-[minmax(9rem,1fr)_auto_auto] gap-4 border-b border-[var(--line)] px-5 py-4 text-sm last:border-0"
             >
               <span className="min-w-0">
                 <strong className="font-medium">{name(row)}</strong>
                 {mastery !== null && (
-                  <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-[#172126]/8">
+                  <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-[var(--surface-muted)]">
                     <span
-                      className="block h-full rounded-full bg-[#173f4c]"
+                      className="block h-full rounded-full bg-[var(--brand)] transition-[width] duration-300"
                       style={{
                         width: `${Math.max(0, Math.min(100, mastery))}%`,
                       }}
@@ -287,8 +274,8 @@ function InsightTable({
               <span
                 className={
                   review !== null && review > 20
-                    ? "font-mono text-[#a15130]"
-                    : "font-mono text-[#52705b]"
+                    ? "font-mono text-[var(--review)]"
+                    : "font-mono text-[var(--success)]"
                 }
               >
                 {percent(review)}

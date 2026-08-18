@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { AppShell } from "@/components/app-shell";
 
 const API = "/api";
 
@@ -81,6 +82,25 @@ export default function NewExamPage() {
     (sum, question) => sum + questionTotal(question),
     0,
   );
+  const removeQuestion = (questionIndex: number) =>
+    setQuestions((items) =>
+      items.length === 1
+        ? items
+        : items.filter((_, index) => index !== questionIndex),
+    );
+  const removeCriterion = (questionIndex: number, criterionIndex: number) =>
+    setQuestions((items) =>
+      items.map((question, index) =>
+        index !== questionIndex || question.criteria.length === 1
+          ? question
+          : {
+              ...question,
+              criteria: question.criteria.filter(
+                (_, criterion) => criterion !== criterionIndex,
+              ),
+            },
+      ),
+    );
 
   async function importQuestionPaper(file: File | undefined) {
     if (!file) return;
@@ -206,58 +226,48 @@ export default function NewExamPage() {
     );
 
   return (
-    <main className="min-h-screen bg-[#f5f1e9] text-[#172126]">
-      <header className="border-b border-[#172126]/10 bg-[#fcfaf5] px-5 py-4 sm:px-8">
-        <div className="mx-auto flex max-w-5xl items-center justify-between">
-          <Link href="/" className="font-serif text-2xl font-bold">
-            PRISM
-          </Link>
-          <Link
-            href="/"
-            className="text-sm text-[#566164] underline underline-offset-4"
-          >
-            Back to workspace
-          </Link>
-        </div>
-      </header>
-      <form onSubmit={submit} className="mx-auto max-w-5xl px-5 py-8 sm:px-8">
-        <div className="mb-8 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+    <AppShell>
+      <form onSubmit={submit} className="mx-auto max-w-5xl">
+        <div className="mb-8 flex flex-col justify-between gap-3 border-b border-[var(--line)] pb-7 sm:flex-row sm:items-end">
           <div>
-            <p className="text-sm text-[#667174]">Exam setup</p>
-            <h1 className="font-serif text-3xl font-semibold">
+            <h1 className="font-serif text-4xl font-semibold tracking-[-0.035em]">
               Create an assessment
             </h1>
+            <p className="mt-2 text-sm text-[var(--ink-muted)]">
+              Set the source-of-truth rubric before papers reach the review
+              queue.
+            </p>
           </div>
-          <strong className="font-mono text-lg">{total} marks</strong>
+          <strong className="status-pill bg-[var(--brand-soft)] text-[var(--brand-strong)]">
+            {total} marks
+          </strong>
         </div>
         {error && (
-          <p className="mb-6 rounded-md border border-[#a15130]/25 bg-[#fff4e9] p-3 text-sm text-[#8b3d20]">
+          <p className="mb-6 rounded-lg bg-[var(--review-soft)] p-4 text-sm text-[var(--review)]">
             {error}
           </p>
         )}
-        <section className="mb-6 rounded-lg border border-[#0f5864]/20 bg-[#eef7f5] p-5">
-          <h2 className="text-lg font-semibold text-[#153e46]">
+        <section className="mb-6 rounded-xl bg-[var(--brand-soft)] p-5">
+          <h2 className="font-serif text-2xl font-semibold text-[var(--brand-strong)]">
             Start from a question paper
           </h2>
-          <p className="mt-1 text-sm leading-6 text-[#49616a]">
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--ink-muted)]">
             Upload a scanned or photographed paper. PRISM extracts a draft of
             visible questions and suggests rubric criteria for you to review
             before saving.
           </p>
-          <label className="mt-4 flex cursor-pointer items-center justify-between gap-4 rounded-md border border-dashed border-[#5d8d95] bg-white px-4 py-4 text-sm hover:bg-[#f6fbfa]">
+          <label className="mt-4 flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-dashed border-[var(--brand)] bg-[var(--surface)] px-4 py-4 text-sm transition-colors hover:bg-[var(--surface-muted)]">
             <span>
-              <strong className="block text-[#153e46]">
+              <strong className="block text-[var(--brand-strong)]">
                 {importing
                   ? "Reading question paper…"
                   : "Choose a JPEG, PNG, or PDF"}
               </strong>
-              <span className="text-[#49616a]">
+              <span className="text-[var(--ink-muted)]">
                 The existing form will be replaced by an editable draft.
               </span>
             </span>
-            <span className="rounded-md bg-[#0f5864] px-3 py-2 font-medium text-white">
-              Browse
-            </span>
+            <span className="button-primary">Browse</span>
             <input
               className="sr-only"
               type="file"
@@ -283,7 +293,7 @@ export default function NewExamPage() {
             </div>
           )}
         </section>
-        <section className="mb-6 grid gap-4 rounded-lg border border-[#172126]/10 bg-[#fcfaf5] p-5 sm:grid-cols-3">
+        <section className="surface mb-6 grid gap-4 p-5 sm:grid-cols-3">
           <Field label="Exam title">
             <input
               name="title"
@@ -314,10 +324,7 @@ export default function NewExamPage() {
         </section>
         <div className="space-y-5">
           {questions.map((question, questionIndex) => (
-            <section
-              key={questionIndex}
-              className="rounded-lg border border-[#172126]/10 bg-[#fcfaf5] p-5"
-            >
+            <section key={question.number} className="surface-lined p-5">
               <div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
                 <div className="grid gap-3 sm:grid-cols-[100px_1fr]">
                   <Field label="Number">
@@ -368,9 +375,19 @@ export default function NewExamPage() {
                     />
                   </Field>
                 </div>
-                <span className="font-mono text-sm text-[#566164]">
-                  {questionTotal(question)} marks
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm text-[var(--ink-muted)]">
+                    {questionTotal(question)} marks
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removeQuestion(questionIndex)}
+                    disabled={questions.length === 1}
+                    className="button-quiet px-2 py-1 text-xs disabled:opacity-40"
+                  >
+                    Remove
+                  </button>
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[650px] text-left text-sm">
@@ -380,12 +397,13 @@ export default function NewExamPage() {
                       <th className="pb-2 font-medium">Description</th>
                       <th className="pb-2 font-medium">Concept</th>
                       <th className="pb-2 text-right font-medium">Marks</th>
+                      <th aria-label="Criterion actions" />
                     </tr>
                   </thead>
                   <tbody>
                     {question.criteria.map((criterion, criterionIndex) => (
                       <tr
-                        key={criterionIndex}
+                        key={criterion.title}
                         className="border-b border-[#172126]/8 last:border-0"
                       >
                         <td className="py-2 pr-2">
@@ -454,6 +472,18 @@ export default function NewExamPage() {
                             className="input w-20 text-right"
                           />
                         </td>
+                        <td className="py-2 pl-2 text-right">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              removeCriterion(questionIndex, criterionIndex)
+                            }
+                            disabled={question.criteria.length === 1}
+                            className="button-quiet px-2 py-1 text-xs disabled:opacity-40"
+                          >
+                            Remove
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -473,14 +503,14 @@ export default function NewExamPage() {
                     ),
                   )
                 }
-                className="mt-4 text-sm font-medium text-[#173f4c] underline underline-offset-4"
+                className="button-secondary mt-4"
               >
                 Add criterion
               </button>
             </section>
           ))}
         </div>
-        <div className="mt-6 flex flex-col justify-between gap-4 border-t border-[#172126]/10 pt-5 sm:flex-row sm:items-center">
+        <div className="mt-6 flex flex-col justify-between gap-4 border-t border-[var(--line)] pt-5 sm:flex-row sm:items-center">
           <button
             type="button"
             onClick={() =>
@@ -489,20 +519,16 @@ export default function NewExamPage() {
                 blankQuestion(items.length + 1),
               ])
             }
-            className="self-start text-sm font-medium text-[#173f4c] underline underline-offset-4"
+            className="button-secondary self-start"
           >
             Add question
           </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="rounded-md bg-[#173f4c] px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-          >
+          <button type="submit" disabled={saving} className="button-primary">
             {saving ? "Saving exam..." : "Save exam and rubric"}
           </button>
         </div>
       </form>
-    </main>
+    </AppShell>
   );
 }
 
@@ -514,9 +540,9 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <label className="grid gap-1 text-sm font-medium text-[#566164]">
+    <div className="grid gap-1 text-sm font-medium text-[#566164]">
       <span>{label}</span>
       {children}
-    </label>
+    </div>
   );
 }

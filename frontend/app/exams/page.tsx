@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { AppShell } from "@/components/app-shell";
 
 const API = "/api";
 
@@ -43,40 +44,37 @@ export default function ExamsPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-[#f5f1e9] text-[#172126]">
-      <header className="border-b border-[#172126]/10 bg-[#fcfaf5] px-5 py-4 sm:px-8">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
-          <Link href="/" className="font-serif text-2xl font-bold">
-            PRISM
-          </Link>
-          <Link
-            href="/exams/new"
-            className="rounded-md bg-[#173f4c] px-3 py-2 text-sm font-medium text-white"
-          >
-            Create exam
-          </Link>
-        </div>
-      </header>
-      <section className="mx-auto max-w-6xl px-5 py-8 sm:px-8">
-        <div className="mb-8">
-          <p className="text-sm text-[#667174]">Assessment library</p>
-          <h1 className="font-serif text-3xl font-semibold tracking-tight">
-            Your exams
-          </h1>
-          <p className="mt-2 text-sm text-[#566164]">
-            Open an assessment to upload papers, review its rubric, or inspect
-            class evidence.
+    <AppShell
+      actions={
+        <Link href="/exams/new" className="button-primary">
+          Create exam
+        </Link>
+      }
+    >
+      <section className="mx-auto max-w-6xl">
+        <div className="mb-9 flex flex-col justify-between gap-5 border-b border-[var(--line)] pb-7 sm:flex-row sm:items-end">
+          <div>
+            <h1 className="font-serif text-4xl font-semibold tracking-[-0.035em]">
+              Your exams
+            </h1>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--ink-muted)]">
+              Open an assessment to upload papers, review its rubric, or inspect
+              class evidence.
+            </p>
+          </div>
+          <p className="text-sm text-[var(--ink-muted)]">
+            {exams.length} assessment{exams.length === 1 ? "" : "s"}
           </p>
         </div>
         {loading && (
-          <div className="rounded-lg border border-[#172126]/10 bg-[#fcfaf5] p-6 text-sm text-[#667174]">
+          <div className="surface-lined p-6 text-sm text-[var(--ink-muted)]">
             Loading assessments...
           </div>
         )}
         {!loading && error && (
           <div
             role="alert"
-            className="rounded-lg border border-[#a15130]/25 bg-[#fff4e9] p-5 text-sm text-[#8b3d20]"
+            className="rounded-lg bg-[var(--review-soft)] p-5 text-sm text-[var(--review)]"
           >
             <p>{error}</p>
             <Link
@@ -88,50 +86,44 @@ export default function ExamsPage() {
           </div>
         )}
         {!loading && !error && exams.length === 0 && (
-          <div className="rounded-lg border border-dashed border-[#172126]/20 bg-[#fcfaf5] p-8">
-            <h2 className="font-serif text-xl font-semibold">No exams yet</h2>
-            <p className="mt-2 text-sm text-[#566164]">
+          <div className="surface-lined p-8">
+            <h2 className="font-serif text-2xl font-semibold">No exams yet</h2>
+            <p className="mt-2 max-w-md text-sm leading-6 text-[var(--ink-muted)]">
               Create your first assessment and add its marking rubric before
               uploading student papers.
             </p>
-            <Link
-              href="/exams/new"
-              className="mt-5 inline-block rounded-md bg-[#173f4c] px-4 py-2 text-sm font-medium text-white"
-            >
+            <Link href="/exams/new" className="button-primary mt-5">
               Create exam
             </Link>
           </div>
         )}
         {!loading && !error && exams.length > 0 && (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             {exams.map((exam) => (
               <article
                 key={exam.id}
-                className="flex min-h-52 flex-col rounded-lg border border-[#172126]/10 bg-[#fcfaf5] p-5"
+                className="surface flex min-h-52 flex-col p-6"
               >
-                <p className="text-sm text-[#667174]">
+                <p className="text-sm text-[var(--ink-muted)]">
                   {exam.subject}
                   {exam.date ? ` · ${exam.date}` : ""}
                 </p>
-                <h2 className="mt-2 font-serif text-xl font-semibold">
+                <h2 className="mt-2 font-serif text-2xl font-semibold tracking-[-0.02em]">
                   {exam.title}
                 </h2>
-                <p className="mt-3 text-sm text-[#566164]">
+                <p className="mt-3 text-sm text-[var(--ink-muted)]">
                   {exam.questions?.length ?? 0} questions
                   {typeof exam.total_marks === "number"
                     ? ` · ${exam.total_marks} marks`
                     : ""}
                 </p>
                 <div className="mt-auto flex flex-wrap gap-3 pt-6 text-sm font-medium">
-                  <Link
-                    href={`/exams/${exam.id}`}
-                    className="text-[#173f4c] underline underline-offset-4"
-                  >
+                  <Link href={`/exams/${exam.id}`} className="button-secondary">
                     Open exam
                   </Link>
                   <Link
                     href={`/exams/${exam.id}/insights`}
-                    className="text-[#173f4c] underline underline-offset-4"
+                    className="button-quiet"
                   >
                     View insights
                   </Link>
@@ -141,6 +133,6 @@ export default function ExamsPage() {
           </div>
         )}
       </section>
-    </main>
+    </AppShell>
   );
 }

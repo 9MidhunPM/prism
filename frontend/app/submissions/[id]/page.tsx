@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { AppShell } from "@/components/app-shell";
 
 const API = "/api";
 
@@ -18,6 +19,7 @@ export default function SubmissionPage({
   const [saving, setSaving] = useState(false);
   const [challenge, setChallenge] = useState("");
   const [proposal, setProposal] = useState<any>(null);
+  const [activePage, setActivePage] = useState(0);
 
   useEffect(() => {
     params.then(({ id }) =>
@@ -110,210 +112,258 @@ export default function SubmissionPage({
     setSaving(false);
   }
   return (
-    <main className="min-h-screen bg-[#f5f1e9] text-[#172126]">
-      <header className="border-b border-[#172126]/10 bg-[#fcfaf5] px-5 py-4 sm:px-8">
-        <div className="mx-auto flex max-w-7xl items-center justify-between">
-          <Link href="/" className="font-serif text-2xl font-bold">
-            PRISM
-          </Link>
-          <span className="text-sm text-[#566164]">
-            {submission.student_name} · {submission.exam_title}
+    <AppShell
+      actions={
+        <Link
+          href={`/exams/${submission.exam_id ?? ""}`}
+          className="button-secondary"
+        >
+          Back to exam
+        </Link>
+      }
+    >
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-6 flex flex-col justify-between gap-3 border-b border-[var(--line)] pb-6 sm:flex-row sm:items-end">
+          <div>
+            <h1 className="font-serif text-4xl font-semibold tracking-[-0.035em]">
+              {submission.student_name}
+            </h1>
+            <p className="mt-2 text-sm text-[var(--ink-muted)]">
+              {submission.exam_title} · {submission.total_score} marks
+            </p>
+          </div>
+          <span className="status-pill status-neutral">
+            Teacher decision required
           </span>
         </div>
-      </header>
-      <div className="mx-auto grid max-w-7xl gap-6 px-5 py-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
-        <section className="rounded-lg border border-[#172126]/10 bg-[#fcfaf5] p-4">
-          <div className="mb-4 flex items-center justify-between">
-            <h1 className="font-serif text-xl font-semibold">Original paper</h1>
-            <span className="text-sm text-[#667174]">
-              {submission.pages.length} page
-              {submission.pages.length === 1 ? "" : "s"}
-            </span>
-          </div>
-          {submission.pages.length ? (
-            <div className="space-y-4">
-              {submission.pages.map((page: any) => (
-                <img
-                  key={page.id}
-                  src={`${API.replace(/\/api$/, "")}${page.url}`}
-                  alt={`Original paper page ${page.page_number}`}
-                  className="w-full rounded-md bg-[#f5f1e9] outline outline-1 outline-[#172126]/10"
-                />
-              ))}
-            </div>
-          ) : (
-            <p className="rounded-md bg-[#f5f1e9] p-4 text-sm text-[#667174]">
-              No original paper is attached to this cached submission.
-            </p>
-          )}
-        </section>
-        <aside className="min-w-0">
-          <section className="rounded-lg border border-[#172126]/10 bg-[#fcfaf5]">
-            <div className="border-b border-[#172126]/10 p-5">
-              <p className="text-sm text-[#667174]">Assessment result</p>
-              <h2 className="font-serif text-2xl font-semibold">
-                {submission.total_score} marks
-              </h2>
-            </div>
-            <div className="max-h-[420px] divide-y divide-[#172126]/8 overflow-y-auto">
-              {submission.evaluations.map((evaluation: any) => (
-                <button
-                  type="button"
-                  key={evaluation.id}
-                  onClick={() => {
-                    setSelected(evaluation);
-                    setProposal(null);
-                  }}
-                  className={`w-full p-4 text-left ${selected?.id === evaluation.id ? "bg-[#173f4c]/6" : "hover:bg-[#173f4c]/3"}`}
-                >
-                  <div className="flex justify-between gap-3">
-                    <span>
-                      <strong className="block text-sm">
-                        {evaluation.question_number} ·{" "}
-                        {evaluation.criterion_title}
-                      </strong>
-                      <span className="text-xs uppercase tracking-wide text-[#667174]">
-                        {evaluation.concept}
-                      </span>
-                    </span>
-                    <strong className="font-mono text-sm">
-                      {evaluation.effective_marks}/{evaluation.max_marks}
-                    </strong>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </section>
-          {selected && (
-            <section className="mt-5 rounded-lg border border-[#172126]/10 bg-[#fcfaf5] p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm text-[#667174]">
-                    {selected.question_number}
-                  </p>
-                  <h2 className="font-serif text-xl font-semibold">
-                    {selected.criterion_title}
-                  </h2>
-                </div>
-                <span
-                  className={
-                    selected.needs_review
-                      ? "text-xs font-medium text-[#a15130]"
-                      : "text-xs font-medium text-[#52705b]"
-                  }
-                >
-                  {selected.needs_review
-                    ? "Review recommended"
-                    : "High confidence"}
-                </span>
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(21rem,.8fr)]">
+          <section className="surface overflow-hidden">
+            <div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4">
+              <div>
+                <h2 className="font-serif text-2xl font-semibold">
+                  Original paper
+                </h2>
+                <p className="mt-1 text-sm text-[var(--ink-muted)]">
+                  Use the page image as ground evidence.
+                </p>
               </div>
-              <p className="mt-4 text-sm leading-6 text-[#566164]">
-                {selected.reason}
-              </p>
-              <blockquote className="mt-4 border-l-2 border-[#c29b54] pl-3 text-sm italic text-[#566164]">
-                “{selected.evidence[0]?.quote ?? "No quotation was returned."}”
-              </blockquote>
-              {answer && (
-                <div className="mt-5 border-t border-[#172126]/10 pt-4">
-                  <h3 className="text-sm font-medium">Transcription</h3>
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[#566164]">
-                    {answer.transcription}
-                  </p>
-                  {answer.uncertainty.length > 0 && (
-                    <p className="mt-3 text-xs text-[#a15130]">
-                      Contains uncertain transcription.
-                    </p>
-                  )}
-                </div>
-              )}
-              <form
-                onSubmit={requestReview}
-                className="mt-5 border-t border-[#172126]/10 pt-4"
-              >
-                <h3 className="text-sm font-medium">Challenge this decision</h3>
-                <div className="mt-3 flex gap-2">
-                  <input
-                    aria-label="Challenge explanation"
-                    className="input"
-                    value={challenge}
-                    onChange={(event) => setChallenge(event.target.value)}
-                    placeholder="What evidence should PRISM reconsider?"
-                  />
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="rounded-md border border-[#173f4c]/25 px-3 py-2 text-sm font-medium text-[#173f4c]"
-                  >
-                    Ask Luna
-                  </button>
-                </div>
-              </form>
-              {proposal && (
-                <section className="mt-4 rounded-md bg-[#fff8e8] p-4">
-                  <p className="text-sm">
-                    Luna suggests{" "}
-                    <strong>
-                      {proposal.suggested_marks}/{selected.max_marks}
-                    </strong>
-                    . {proposal.reason}
-                  </p>
-                  <div className="mt-3 flex gap-2">
+              <span className="text-sm text-[var(--ink-muted)]">
+                {submission.pages.length} page
+                {submission.pages.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            {submission.pages.length ? (
+              <div className="grid min-h-[38rem] grid-cols-[5rem_minmax(0,1fr)] bg-[var(--surface-muted)]">
+                <nav
+                  className="flex flex-col gap-2 border-r border-[var(--line)] bg-[var(--surface)] p-2"
+                  aria-label="Paper pages"
+                >
+                  {submission.pages.map((page: any, index: number) => (
                     <button
+                      key={page.id}
                       type="button"
-                      onClick={() => decideReview("accept")}
-                      disabled={saving}
-                      className="rounded-md bg-[#173f4c] px-3 py-2 text-sm text-white"
+                      onClick={() => setActivePage(index)}
+                      aria-current={activePage === index ? "page" : undefined}
+                      className={`overflow-hidden rounded-md border p-1 text-xs font-semibold transition-colors ${activePage === index ? "border-[var(--brand)] bg-[var(--brand-soft)] text-[var(--brand-strong)]" : "border-[var(--line)] text-[var(--ink-muted)]"}`}
                     >
-                      Accept
+                      <img
+                        src={`${API.replace(/\/api$/, "")}${page.url}`}
+                        alt=""
+                        className="mb-1 aspect-[3/4] w-full object-cover"
+                      />
+                      {page.page_number}
                     </button>
+                  ))}
+                </nav>
+                <div className="flex items-center justify-center overflow-auto p-4">
+                  <img
+                    src={`${API.replace(/\/api$/, "")}${submission.pages[activePage]?.url}`}
+                    alt={`Original paper page ${submission.pages[activePage]?.page_number}`}
+                    className="max-h-[44rem] w-auto max-w-full rounded-md shadow-[0_12px_28px_rgb(30_42_43_/_0.14)]"
+                  />
+                </div>
+              </div>
+            ) : (
+              <p className="m-5 rounded-lg bg-[var(--surface-muted)] p-4 text-sm text-[var(--ink-muted)]">
+                No original paper is attached to this cached submission.
+              </p>
+            )}
+          </section>
+          <aside className="min-w-0">
+            <section className="surface overflow-hidden">
+              <div className="border-b border-[var(--line)] p-5">
+                <p className="text-sm text-[var(--ink-muted)]">
+                  Assessment result
+                </p>
+                <h2 className="font-serif text-2xl font-semibold">
+                  Criterion review
+                </h2>
+              </div>
+              <div className="max-h-[23rem] divide-y divide-[var(--line)] overflow-y-auto">
+                {submission.evaluations.map((evaluation: any) => (
+                  <button
+                    type="button"
+                    key={evaluation.id}
+                    onClick={() => {
+                      setSelected(evaluation);
+                      setProposal(null);
+                    }}
+                    className={`w-full p-4 text-left transition-colors duration-150 ${selected?.id === evaluation.id ? "bg-[var(--brand-soft)]" : "hover:bg-[var(--surface-muted)]"}`}
+                  >
+                    <div className="flex justify-between gap-3">
+                      <span>
+                        <strong className="block text-sm">
+                          {evaluation.question_number} ·{" "}
+                          {evaluation.criterion_title}
+                        </strong>
+                        <span className="text-xs uppercase tracking-wide text-[var(--ink-muted)]">
+                          {evaluation.concept}
+                        </span>
+                      </span>
+                      <strong className="font-mono text-sm">
+                        {evaluation.effective_marks}/{evaluation.max_marks}
+                      </strong>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
+            {selected && (
+              <section className="surface mt-5 p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm text-[var(--ink-muted)]">
+                      {selected.question_number}
+                    </p>
+                    <h2 className="font-serif text-xl font-semibold">
+                      {selected.criterion_title}
+                    </h2>
+                  </div>
+                  <span
+                    className={
+                      selected.needs_review
+                        ? "status-pill status-review"
+                        : "status-pill status-success"
+                    }
+                  >
+                    {selected.needs_review
+                      ? "Review recommended"
+                      : "High confidence"}
+                  </span>
+                </div>
+                <p className="mt-4 text-sm leading-6 text-[var(--ink-muted)]">
+                  {selected.reason}
+                </p>
+                <blockquote className="mt-4 border-l border-[var(--line)] pl-3 text-sm italic text-[var(--ink-muted)]">
+                  “{selected.evidence[0]?.quote ?? "No quotation was returned."}
+                  ”
+                </blockquote>
+                {answer && (
+                  <div className="mt-5 border-t border-[var(--line)] pt-4">
+                    <h3 className="text-sm font-medium">Transcription</h3>
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--ink-muted)]">
+                      {answer.transcription}
+                    </p>
+                    {answer.uncertainty.length > 0 && (
+                      <p className="mt-3 text-xs text-[var(--review)]">
+                        Contains uncertain transcription.
+                      </p>
+                    )}
+                  </div>
+                )}
+                <form
+                  onSubmit={requestReview}
+                  className="mt-5 border-t border-[var(--line)] pt-4"
+                >
+                  <h3 className="text-sm font-medium">
+                    Challenge this decision
+                  </h3>
+                  <div className="mt-3 flex gap-2">
+                    <input
+                      aria-label="Challenge explanation"
+                      className="input"
+                      value={challenge}
+                      onChange={(event) => setChallenge(event.target.value)}
+                      placeholder="What evidence should PRISM reconsider?"
+                    />
                     <button
-                      type="button"
-                      onClick={() => decideReview("reject")}
+                      type="submit"
                       disabled={saving}
-                      className="rounded-md border border-[#173f4c]/25 px-3 py-2 text-sm text-[#173f4c]"
+                      className="button-secondary shrink-0"
                     >
-                      Reject
+                      Ask Luna
                     </button>
                   </div>
-                </section>
-              )}
-              <form
-                onSubmit={saveOverride}
-                className="mt-5 border-t border-[#172126]/10 pt-4"
-              >
-                <h3 className="text-sm font-medium">Teacher override</h3>
-                <div className="mt-3 grid gap-2 sm:grid-cols-[100px_1fr_auto]">
-                  <input
-                    aria-label="Override marks"
-                    className="input"
-                    type="number"
-                    min="0"
-                    max={selected.max_marks}
-                    step="0.5"
-                    value={overrideMarks}
-                    onChange={(event) => setOverrideMarks(event.target.value)}
-                    placeholder="Marks"
-                  />
-                  <input
-                    aria-label="Override reason"
-                    className="input"
-                    value={overrideReason}
-                    onChange={(event) => setOverrideReason(event.target.value)}
-                    placeholder="Optional reason"
-                  />
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="rounded-md bg-[#173f4c] px-3 py-2 text-sm font-medium text-white"
-                  >
-                    {saving ? "Saving" : "Apply"}
-                  </button>
-                </div>
-              </form>
-            </section>
-          )}
-        </aside>
+                </form>
+                {proposal && (
+                  <section className="mt-4 rounded-lg bg-[var(--review-soft)] p-4">
+                    <p className="text-sm">
+                      Luna suggests{" "}
+                      <strong>
+                        {proposal.suggested_marks}/{selected.max_marks}
+                      </strong>
+                      . {proposal.reason}
+                    </p>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => decideReview("accept")}
+                        disabled={saving}
+                        className="button-primary"
+                      >
+                        Accept
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => decideReview("reject")}
+                        disabled={saving}
+                        className="button-secondary"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </section>
+                )}
+                <form
+                  onSubmit={saveOverride}
+                  className="mt-5 border-t border-[var(--line)] pt-4"
+                >
+                  <h3 className="text-sm font-medium">Teacher override</h3>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-[100px_1fr_auto]">
+                    <input
+                      aria-label="Override marks"
+                      className="input"
+                      type="number"
+                      min="0"
+                      max={selected.max_marks}
+                      step="0.5"
+                      value={overrideMarks}
+                      onChange={(event) => setOverrideMarks(event.target.value)}
+                      placeholder="Marks"
+                    />
+                    <input
+                      aria-label="Override reason"
+                      className="input"
+                      value={overrideReason}
+                      onChange={(event) =>
+                        setOverrideReason(event.target.value)
+                      }
+                      placeholder="Optional reason"
+                    />
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="button-primary"
+                    >
+                      {saving ? "Saving" : "Apply"}
+                    </button>
+                  </div>
+                </form>
+              </section>
+            )}
+          </aside>
+        </div>
       </div>
-    </main>
+    </AppShell>
   );
 }

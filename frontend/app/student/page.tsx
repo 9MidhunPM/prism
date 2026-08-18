@@ -56,10 +56,13 @@ export default function StudentPortal() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-[#f5f1e9] text-[#172126]">
-      <header className="border-b border-[#172126]/10 bg-[#fcfaf5] px-5 py-4 sm:px-8">
+    <main className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
+      <header className="border-b border-[var(--line)] bg-[var(--surface)] px-5 py-4 sm:px-8">
         <div className="mx-auto flex max-w-5xl items-center justify-between">
-          <Link href="/student" className="font-serif text-2xl font-bold">
+          <Link
+            href="/student"
+            className="font-serif text-2xl font-bold tracking-[-0.03em] text-[var(--brand-strong)]"
+          >
             PRISM
           </Link>
           <div className="flex items-center gap-4">
@@ -72,7 +75,7 @@ export default function StudentPortal() {
       </header>
       <section className="mx-auto max-w-5xl px-5 py-8 sm:px-8">
         {error ? (
-          <div className="rounded-lg border border-[#a15130]/25 bg-[#fff4e9] p-5 text-sm text-[#8b3d20]">
+          <div className="rounded-lg bg-[var(--review-soft)] p-5 text-sm text-[var(--review)]">
             {error}{" "}
             <Link href="/login" className="font-medium underline">
               Sign in
@@ -80,28 +83,27 @@ export default function StudentPortal() {
           </div>
         ) : (
           <>
-            <div className="mb-8">
-              <p className="text-sm text-[#667174]">Student portal</p>
-              <h1 className="font-serif text-3xl font-semibold">
+            <div className="mb-8 border-b border-[var(--line)] pb-7">
+              <h1 className="font-serif text-4xl font-semibold tracking-[-0.035em]">
                 {profile?.student.name ?? "Loading your results..."}
               </h1>
-              <p className="mt-2 text-sm text-[#566164]">
+              <p className="mt-3 text-sm leading-6 text-[var(--ink-muted)]">
                 Grades are shown for review. Your teacher remains responsible
                 for final assessment decisions.
               </p>
             </div>
             <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">
               <section>
-                <h2 className="font-serif text-xl font-semibold">
+                <h2 className="font-serif text-2xl font-semibold">
                   Your submissions
                 </h2>
-                <div className="mt-3 overflow-hidden rounded-lg border border-[#172126]/10 bg-[#fcfaf5]">
+                <div className="surface-lined mt-3 overflow-hidden">
                   {submissions.map((submission) => (
                     <button
                       type="button"
                       key={submission.id}
                       onClick={() => setSelected(submission)}
-                      className={`block w-full border-b border-[#172126]/8 p-4 text-left last:border-0 hover:bg-[#173f4c]/4 ${selected?.id === submission.id ? "bg-[#173f4c]/7" : ""}`}
+                      className={`block w-full border-b border-[var(--line)] p-4 text-left transition-colors last:border-0 hover:bg-[var(--surface-muted)] ${selected?.id === submission.id ? "bg-[var(--brand-soft)]" : ""}`}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <span>
@@ -135,8 +137,8 @@ export default function StudentPortal() {
               </section>
               <Result result={selected} />
             </div>
-            <section className="mt-8 rounded-lg border border-[#172126]/10 bg-[#fcfaf5] p-5">
-              <h2 className="font-serif text-xl font-semibold">
+            <section className="surface mt-8 p-5">
+              <h2 className="font-serif text-2xl font-semibold">
                 Learning profile
               </h2>
               <div className="mt-5 grid gap-5 sm:grid-cols-2">
@@ -157,7 +159,7 @@ export default function StudentPortal() {
                   </div>
                   <div className="mt-2 h-2 overflow-hidden rounded-full bg-[#172126]/8">
                     <div
-                      className="h-full bg-[#173f4c]"
+                      className="h-full bg-[var(--brand)] transition-[width] duration-300"
                       style={{ width: `${concept.mastery}%` }}
                     />
                   </div>
@@ -174,27 +176,27 @@ export default function StudentPortal() {
 function Result({ result }: { result: Submission | null }) {
   if (!result)
     return (
-      <section className="rounded-lg border border-dashed border-[#172126]/20 p-5">
-        <h2 className="font-serif text-xl font-semibold">Assessment result</h2>
-        <p className="mt-2 text-sm text-[#667174]">
+      <section className="surface-lined p-5">
+        <h2 className="font-serif text-2xl font-semibold">Assessment result</h2>
+        <p className="mt-2 text-sm text-[var(--ink-muted)]">
           Choose a submission to see criterion-level feedback.
         </p>
       </section>
     );
   return (
-    <section className="overflow-hidden rounded-lg border border-[#172126]/10 bg-[#fcfaf5]">
-      <div className="border-b border-[#172126]/10 p-5">
-        <p className="text-sm text-[#667174]">{result.exam_title}</p>
+    <section className="surface overflow-hidden">
+      <div className="border-b border-[var(--line)] p-5">
+        <p className="text-sm text-[var(--ink-muted)]">{result.exam_title}</p>
         <h2 className="font-serif text-2xl font-semibold">
           {result.total_score} marks
         </h2>
       </div>
-      <div className="divide-y divide-[#172126]/8">
+      <div className="divide-y divide-[var(--line)]">
         {result.evaluations.map((evaluation) => (
           <article key={evaluation.id} className="p-5">
             <div className="flex justify-between gap-4">
               <span>
-                <p className="text-sm text-[#667174]">
+                <p className="text-sm text-[var(--ink-muted)]">
                   {evaluation.question_number}
                 </p>
                 <h3 className="font-medium">{evaluation.criterion_title}</h3>
@@ -203,11 +205,11 @@ function Result({ result }: { result: Submission | null }) {
                 {evaluation.marks}/{evaluation.max_marks}
               </strong>
             </div>
-            <p className="mt-2 text-sm leading-6 text-[#566164]">
+            <p className="mt-2 text-sm leading-6 text-[var(--ink-muted)]">
               {evaluation.reason}
             </p>
             {evaluation.needs_review && (
-              <p className="mt-3 text-xs font-medium text-[#a15130]">
+              <p className="mt-3 text-xs font-medium text-[var(--review)]">
                 Teacher review recommended
               </p>
             )}
