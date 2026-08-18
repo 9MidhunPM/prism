@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse
 import fitz
 from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
-from .ai import grade_criterion, perceive_page
+from .ai import grade_criterion, perceive_page, review_criterion
 from .settings import get_settings
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -340,15 +340,19 @@ def get_page(page_id: str):
 
 
 @app.post("/api/evaluations/{evaluation_id}/review")
-def request_review(evaluation_id: str, payload: ReviewInput):
+async def request_review(evaluation_id: str, payload: ReviewInput):
+    if not settings.openai_enabled:
+        raise HTTPException(503, "OPENAI_API_KEY is required for criterion re-evaluation.")
     with connection() as con:
-        evaluation = con.execute("""SELECT ev.*, c.max_marks FROM evaluations ev JOIN criteria c ON c.id=ev.criterion_id WHERE ev.id=?""", (evaluation_id,)).fetchone()
+        evaluation = con.execute("""SELECT ev.*, c.title, c.description, c.max_marks, q.text question_text, a.transcription, p.processed_path, p.original_path, p.mime_type FROM evaluations ev JOIN criteria c ON c.id=ev.criterion_id JOIN questions q ON q.id=c.question_id JOIN answers a ON a.question_id=q.id AND a.submission_id=ev.submission_id JOIN pages p ON p.id=a.page_id WHERE ev.id=? LIMIT 1""", (evaluation_id,)).fetchone()
         if not evaluation:
             raise HTTPException(404, "Evaluation not found")
-        suggestion = min(evaluation["max_marks"], evaluation["ai_marks"] + 0.5)
+    result = await review_criterion(evaluation["processed_path"] or evaluation["original_path"], "image/jpeg" if evaluation["processed_path"] else evaluation["mime_type"], evaluation["question_text"], dict(evaluation), evaluation["transcription"], evaluation["teacher_marks"] if evaluation["teacher_marks"] is not None else evaluation["ai_marks"], evaluation["reason"], payload.comment)
+    suggestion = min(evaluation["max_marks"], max(0, result.suggested_marks))
+    with connection() as con:
         review_id = str(uuid.uuid4())
-        con.execute("INSERT INTO reviews VALUES (?, ?, ?, ?, 'pending', ?)", (review_id, evaluation_id, suggestion, f"Review suggestion based on teacher note: {payload.comment}", now()))
-    return {"id": review_id, "suggested_marks": suggestion, "status": "pending"}
+        con.execute("INSERT INTO reviews VALUES (?, ?, ?, ?, 'pending', ?)", (review_id, evaluation_id, suggestion, result.reason, now()))
+    return {"id": review_id, "previous_marks": evaluation["teacher_marks"] if evaluation["teacher_marks"] is not None else evaluation["ai_marks"], "suggested_marks": suggestion, "reason": result.reason, "evidence": result.evidence_quotes, "confidence": result.confidence, "status": "pending"}
 
 
 @app.post("/api/reviews/{review_id}/{decision}")

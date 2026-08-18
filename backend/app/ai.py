@@ -36,6 +36,13 @@ class GradeResult(BaseModel):
     needs_review: bool
 
 
+class ReviewResult(BaseModel):
+    suggested_marks: float = Field(ge=0)
+    reason: str
+    evidence_quotes: list[str]
+    confidence: float = Field(ge=0, le=1)
+
+
 def image_content(path: str, mime_type: str) -> dict:
     if mime_type == "application/pdf":
         document = fitz.open(path)
@@ -67,4 +74,19 @@ Maximum marks: {criterion['max_marks']}
 Student transcription: {transcription}
 Use the image as ground evidence. Award a score between zero and the maximum, quote evidence exactly, and flag uncertainty. Do not calculate totals."""
     response = await client.responses.parse(model=MODEL, input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=GradeResult)
+    return response.output_parsed
+
+
+async def review_criterion(path: str, mime_type: str, question: str, criterion: dict, transcription: str, current_marks: float, current_reason: str, teacher_comment: str) -> ReviewResult:
+    client = AsyncOpenAI(max_retries=settings.openai_max_retries, timeout=settings.openai_timeout_seconds)
+    prompt = f"""You are PRISM's teacher review operation ({REVIEW_VERSION}). Re-evaluate only this criterion.
+Question: {question}
+Criterion: {criterion['title']} - {criterion['description']}
+Maximum marks: {criterion['max_marks']}
+Student transcription: {transcription}
+Current suggested marks: {current_marks}
+Current reason: {current_reason}
+Teacher comment: {teacher_comment}
+Use the original image as ground evidence. Return a suggested score between zero and the maximum, concise evidence-backed reasoning, and exact evidence quotes. Do not calculate totals and do not change any stored score."""
+    response = await client.responses.parse(model=MODEL, input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}, image_content(path, mime_type)]}], text_format=ReviewResult)
     return response.output_parsed
