@@ -1,4 +1,4 @@
-"""Password and signed-session helpers for teacher authentication."""
+"""Password and signed-session helpers for authenticated PRISM accounts."""
 
 from __future__ import annotations
 
@@ -29,13 +29,18 @@ def verify_password(password: str, encoded: str) -> bool:
     return hmac.compare_digest(actual, expected)
 
 
-def create_session(teacher_id: str, secret: str, ttl_seconds: int) -> str:
-    payload = base64.urlsafe_b64encode(json.dumps({"sub": teacher_id, "exp": int(time.time()) + ttl_seconds}).encode()).decode().rstrip("=")
+def create_session(account_id: str, secret: str, ttl_seconds: int, role: str = "teacher") -> str:
+    payload = base64.urlsafe_b64encode(json.dumps({"sub": account_id, "role": role, "exp": int(time.time()) + ttl_seconds}).encode()).decode().rstrip("=")
     signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return f"{payload}.{signature}"
 
 
 def read_session(token: str | None, secret: str) -> str | None:
+    data = read_session_data(token, secret)
+    return data["sub"] if data else None
+
+
+def read_session_data(token: str | None, secret: str) -> dict[str, str] | None:
     if not token or "." not in token:
         return None
     payload, signature = token.rsplit(".", 1)
@@ -44,6 +49,8 @@ def read_session(token: str | None, secret: str) -> str | None:
         return None
     try:
         data = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-        return data["sub"] if isinstance(data["sub"], str) and data["exp"] >= time.time() else None
+        if not isinstance(data["sub"], str) or data.get("role") not in {"teacher", "student"} or data["exp"] < time.time():
+            return None
+        return {"sub": data["sub"], "role": data["role"]}
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         return None

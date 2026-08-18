@@ -25,8 +25,13 @@ class Settings(BaseSettings):
     session_secret: SecretStr = SecretStr("development-only-secret")
     session_cookie_secure: bool = False
     session_ttl_seconds: int = Field(default=604800, ge=3600, le=2592000)
-    demo_teacher_email: str = "teacher@example.com"
-    demo_teacher_password: SecretStr = SecretStr("replace-me")
+    demo_mode: bool = False
+    demo_teacher_name: str | None = None
+    demo_teacher_email: str | None = None
+    demo_teacher_password: SecretStr | None = None
+    demo_student_name: str | None = None
+    demo_student_email: str | None = None
+    demo_student_password: SecretStr | None = None
 
     database_url: str = "sqlite:///./data/prism.db"
 

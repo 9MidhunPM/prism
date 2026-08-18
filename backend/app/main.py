@@ -14,12 +14,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from . import database
 from .ai import PerceptionResult, answer_teacher_question, grade_criterion, perceive_page, review_criterion
-from .auth import create_session, hash_password, read_session, verify_password
-from .models import (AIArtifact, Answer, ClassCohort, CriterionEvaluation, EvaluationEvidence, Exam,
+from .auth import create_session, hash_password, read_session_data, verify_password
+from .demo import seed_demo_accounts
+from .models import (AIArtifact, Account, AccountRole, Answer, ClassCohort, CriterionEvaluation, EvaluationEvidence, Exam,
                      EvidenceRegion, ProcessingJob, Question, ReviewSuggestion, RubricCriterion, Student, Submission,
                      SubmissionPage, SubmissionStatus, Teacher, TeacherOverride)
 from .settings import get_settings
@@ -124,19 +125,39 @@ class TeacherCredentials(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=120)
 
 
-def current_teacher(session_token: str | None = Cookie(default=None, alias="prism_session")) -> dict:
-    teacher_id = read_session(session_token, settings.session_secret.get_secret_value())
-    if not teacher_id:
+def current_account(session_token: str | None = Cookie(default=None, alias="prism_session")) -> dict:
+    session_data = read_session_data(session_token, settings.session_secret.get_secret_value())
+    if not session_data:
         raise HTTPException(401, "Sign in to continue.")
     with session() as db:
-        teacher = db.get(Teacher, teacher_id)
+        account = db.get(Account, session_data["sub"])
+        if not account or account.role.value != session_data["role"]:
+            raise HTTPException(401, "Sign in to continue.")
+        return {"id": account.id, "role": account.role.value, "teacher_id": account.teacher_id, "student_id": account.student_id, "email": account.email}
+
+
+def current_teacher(account: dict = Depends(current_account)) -> dict:
+    if account["role"] != AccountRole.TEACHER.value or not account["teacher_id"]:
+        raise HTTPException(403, "Teacher access is required.")
+    with session() as db:
+        teacher = db.get(Teacher, account["teacher_id"])
         if not teacher:
             raise HTTPException(401, "Sign in to continue.")
-        return {"id": teacher.id, "name": teacher.name, "email": teacher.email}
+        return {"id": teacher.id, "account_id": account["id"], "name": teacher.name, "email": teacher.email, "role": AccountRole.TEACHER.value}
 
 
-def set_session(response: Response, teacher_id: str) -> None:
-    response.set_cookie("prism_session", create_session(teacher_id, settings.session_secret.get_secret_value(), settings.session_ttl_seconds), max_age=settings.session_ttl_seconds, httponly=True, secure=settings.session_cookie_secure, samesite="lax", path="/")
+def current_student(account: dict = Depends(current_account)) -> dict:
+    if account["role"] != AccountRole.STUDENT.value or not account["student_id"]:
+        raise HTTPException(403, "Student access is required.")
+    with session() as db:
+        student = db.get(Student, account["student_id"])
+        if not student:
+            raise HTTPException(401, "Sign in to continue.")
+        return {"id": student.id, "account_id": account["id"], "name": student.name, "email": account["email"], "role": AccountRole.STUDENT.value}
+
+
+def set_session(response: Response, account: Account) -> None:
+    response.set_cookie("prism_session", create_session(account.id, settings.session_secret.get_secret_value(), settings.session_ttl_seconds, account.role.value), max_age=settings.session_ttl_seconds, httponly=True, secure=settings.session_cookie_secure, samesite="lax", path="/")
 
 
 def owned_exam(db, exam_id: str, teacher_id: str) -> Exam:
@@ -289,6 +310,8 @@ async def process_submission(submission_id: str) -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_storage()
+    if settings.demo_mode:
+        seed_demo_accounts(settings)
     yield
 
 
@@ -300,25 +323,42 @@ app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list, allo
 def health(): return {"status": "ok", "model": MODEL, "ai_enabled": settings.openai_enabled}
 
 
+@app.get("/api/health/ready")
+def readiness():
+    try:
+        with session() as db:
+            db.execute(text("SELECT 1"))
+        return {"status": "ready"}
+    except Exception as exc:
+        raise HTTPException(503, "Database is unavailable.") from exc
+
+
 @app.post("/api/auth/bootstrap", status_code=201)
 def bootstrap_teacher(payload: TeacherCredentials, response: Response):
     if not payload.name: raise HTTPException(422, "A teacher name is required.")
     with session() as db:
         if db.scalar(select(Teacher.id).limit(1)): raise HTTPException(403, "Teacher setup is already complete. Sign in instead.")
         teacher = Teacher(name=payload.name.strip(), email=payload.email.strip().lower(), password_hash=hash_password(payload.password))
-        db.add(teacher); db.commit()
-        result = {"id": teacher.id, "name": teacher.name, "email": teacher.email}
-    set_session(response, result["id"])
+        db.add(teacher); db.flush()
+        account = Account(email=teacher.email, password_hash=teacher.password_hash, role=AccountRole.TEACHER, teacher_id=teacher.id)
+        db.add(account); db.commit()
+        result = {"id": teacher.id, "name": teacher.name, "email": teacher.email, "role": account.role.value}
+    set_session(response, account)
     return result
 
 
 @app.post("/api/auth/login")
 def login(payload: TeacherCredentials, response: Response):
     with session() as db:
-        teacher = db.scalar(select(Teacher).where(Teacher.email == payload.email.strip().lower()))
-        if not teacher or not verify_password(payload.password, teacher.password_hash): raise HTTPException(401, "Invalid email or password.")
-        result = {"id": teacher.id, "name": teacher.name, "email": teacher.email}
-    set_session(response, result["id"]); return result
+        account = db.scalar(select(Account).where(Account.email == payload.email.strip().lower()))
+        if not account or not verify_password(payload.password, account.password_hash): raise HTTPException(401, "Invalid email or password.")
+        if account.role == AccountRole.TEACHER:
+            identity = db.get(Teacher, account.teacher_id)
+        else:
+            identity = db.get(Student, account.student_id)
+        if not identity: raise HTTPException(401, "Invalid account.")
+        result = {"id": identity.id, "name": identity.name, "email": account.email, "role": account.role.value}
+    set_session(response, account); return result
 
 
 @app.post("/api/auth/logout", status_code=204)
@@ -326,7 +366,10 @@ def logout(response: Response): response.delete_cookie("prism_session", path="/"
 
 
 @app.get("/api/auth/me")
-def me(teacher: dict = Depends(current_teacher)): return teacher
+def me(account: dict = Depends(current_account)):
+    if account["role"] == AccountRole.TEACHER.value:
+        return current_teacher(account)
+    return current_student(account)
 
 
 @app.get("/api/dashboard")
@@ -410,9 +453,32 @@ def get_submission(submission_id: str, teacher: dict = Depends(current_teacher))
             region_data = lambda region: {"kind": region.kind, "description": region.text, "bbox": (region.bbox or {}).get("coordinates")}
             answers.append({"id": answer.id, "question_id": answer.question_id, "page_id": answer.page_id, "transcription": answer.transcription, "uncertainty": answer.uncertainty, "prompt_version": answer.prompt_version, "confidence": answer.confidence, "visual_regions": [region_data(region) for region in regions if region.kind != "formula"], "formula_regions": [region_data(region) for region in regions if region.kind == "formula"]})
         evaluations = []
-        for ev, criterion, question in db.execute(select(CriterionEvaluation, RubricCriterion, Question).join(RubricCriterion).join(Question).join(Answer).where(Answer.submission_id == submission_id).order_by(Question.number)):
+        for ev, criterion, question in db.execute(select(CriterionEvaluation, RubricCriterion, Question).select_from(CriterionEvaluation).join(RubricCriterion, CriterionEvaluation.criterion_id == RubricCriterion.id).join(Question, RubricCriterion.question_id == Question.id).join(Answer, CriterionEvaluation.answer_id == Answer.id).where(Answer.submission_id == submission_id).order_by(Question.number)):
             evaluations.append({"id": ev.id, "ai_marks": ev.ai_marks, "teacher_marks": ev.teacher_marks, "reason": ev.reason, "confidence": ev.confidence, "needs_review": ev.needs_review, "criterion_title": criterion.title, "criterion_description": criterion.description, "max_marks": criterion.max_marks, "concept": criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized", "question_id": question.id, "question_number": question.number, "question_text": question.text, "evidence": [{"page": p.page_number if (p := db.get(SubmissionPage, evidence.page_id)) else None, "quote": evidence.quote} for evidence in db.scalars(select(EvaluationEvidence).where(EvaluationEvidence.evaluation_id == ev.id))], "effective_marks": ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks})
         return {"id": submission.id, "exam_id": submission.exam_id, "student_id": submission.student_id, "status": submission.status.value, "total_score": submission.total_score, "created_at": submission.created_at, "error": submission.error, "student_name": student.name, "exam_title": exam.title, "pages": pages, "answers": answers, "evaluations": evaluations}
+
+
+def student_result(db, submission: Submission) -> dict:
+    exam = db.get(Exam, submission.exam_id)
+    evaluations = []
+    for ev, criterion, question in db.execute(select(CriterionEvaluation, RubricCriterion, Question).select_from(CriterionEvaluation).join(RubricCriterion, CriterionEvaluation.criterion_id == RubricCriterion.id).join(Question, RubricCriterion.question_id == Question.id).join(Answer, CriterionEvaluation.answer_id == Answer.id).where(Answer.submission_id == submission.id).order_by(Question.number)):
+        evaluations.append({"id": ev.id, "question_number": question.number, "criterion_title": criterion.title, "max_marks": criterion.max_marks, "marks": ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks, "reason": ev.reason, "confidence": ev.confidence, "needs_review": ev.needs_review, "evidence": [{"page": page.page_number if (page := db.get(SubmissionPage, evidence.page_id)) else None, "quote": evidence.quote} for evidence in db.scalars(select(EvaluationEvidence).where(EvaluationEvidence.evaluation_id == ev.id))]})
+    return {"id": submission.id, "exam_id": submission.exam_id, "exam_title": exam.title, "subject": exam.subject, "status": submission.status.value, "total_score": submission.total_score, "created_at": submission.created_at, "evaluations": evaluations}
+
+
+@app.get("/api/student/submissions")
+def own_submissions(student: dict = Depends(current_student)):
+    with session() as db:
+        submissions = db.scalars(select(Submission).where(Submission.student_id == student["id"]).order_by(Submission.created_at.desc())).all()
+        return [student_result(db, submission) for submission in submissions]
+
+
+@app.get("/api/student/submissions/{submission_id}")
+def own_submission(submission_id: str, student: dict = Depends(current_student)):
+    with session() as db:
+        submission = db.scalar(select(Submission).where(Submission.id == submission_id, Submission.student_id == student["id"]))
+        if not submission: raise HTTPException(404, "Submission not found")
+        return student_result(db, submission)
 
 
 @app.get("/api/pages/{page_id}")
@@ -465,10 +531,18 @@ def evaluation_history(evaluation_id: str, teacher: dict = Depends(current_teach
 
 
 def concept_rows(db, teacher_id: str, student_id: str | None = None, exam_id: str | None = None):
-    statement = select(CriterionEvaluation, RubricCriterion).join(RubricCriterion).join(Answer).join(Submission).join(Exam).where(Exam.teacher_id == teacher_id)
+    statement = select(CriterionEvaluation, RubricCriterion).select_from(CriterionEvaluation).join(RubricCriterion, CriterionEvaluation.criterion_id == RubricCriterion.id).join(Answer, CriterionEvaluation.answer_id == Answer.id).join(Submission, Answer.submission_id == Submission.id).join(Exam, Submission.exam_id == Exam.id).where(Exam.teacher_id == teacher_id)
     if student_id: statement = statement.where(Submission.student_id == student_id)
     if exam_id: statement = statement.where(Submission.exam_id == exam_id)
     return db.execute(statement).all()
+
+
+def profile_data(db, student: Student, teacher_id: str) -> dict:
+    concepts = {}
+    for ev, criterion in concept_rows(db, teacher_id, student_id=student.id):
+        name = criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized"; bucket = concepts.setdefault(name, [0, 0]); bucket[0] += ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks; bucket[1] += criterion.max_marks
+    performance = [{"concept": name, "mastery": round(score / maximum * 100) if maximum else 0} for name, (score, maximum) in concepts.items()]
+    return {"student": {"id": student.id, "name": student.name, "identifier": student.identifier}, "concepts": performance, "strengths": [p["concept"] for p in performance if p["mastery"] >= 75], "developing": [p["concept"] for p in performance if p["mastery"] < 75]}
 
 
 @app.get("/api/students/{student_id}/profile")
@@ -476,11 +550,16 @@ def student_profile(student_id: str, teacher: dict = Depends(current_teacher)):
     with session() as db:
         student = db.scalar(select(Student).join(ClassCohort).where(Student.id == student_id, ClassCohort.teacher_id == teacher["id"]))
         if not student: raise HTTPException(404, "Student not found")
-        concepts = {}
-        for ev, criterion in concept_rows(db, teacher["id"], student_id=student_id):
-            name = criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized"; bucket = concepts.setdefault(name, [0, 0]); bucket[0] += ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks; bucket[1] += criterion.max_marks
-        performance = [{"concept": name, "mastery": round(score / maximum * 100) if maximum else 0} for name, (score, maximum) in concepts.items()]
-        return {"student": {"id": student.id, "name": student.name, "identifier": student.identifier}, "concepts": performance, "strengths": [p["concept"] for p in performance if p["mastery"] >= 75], "developing": [p["concept"] for p in performance if p["mastery"] < 75]}
+        return profile_data(db, student, teacher["id"])
+
+
+@app.get("/api/student/profile")
+def own_profile(student: dict = Depends(current_student)):
+    with session() as db:
+        profile_student = db.get(Student, student["id"])
+        cohort = db.get(ClassCohort, profile_student.class_id) if profile_student else None
+        if not profile_student or not cohort: raise HTTPException(404, "Student not found")
+        return profile_data(db, profile_student, cohort.teacher_id)
 
 
 @app.get("/api/exams/{exam_id}/analytics")

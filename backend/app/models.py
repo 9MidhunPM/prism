@@ -27,6 +27,11 @@ class SubmissionStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class AccountRole(str, enum.Enum):
+    TEACHER = "teacher"
+    STUDENT = "student"
+
+
 class Teacher(Base):
     __tablename__ = "teachers"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
@@ -50,6 +55,21 @@ class Student(Base):
     class_id: Mapped[str] = mapped_column(ForeignKey("classes.id"), index=True)
     name: Mapped[str] = mapped_column(String(120))
     identifier: Mapped[str] = mapped_column(String(100))
+
+
+class Account(Base):
+    __tablename__ = "accounts"
+    __table_args__ = (
+        UniqueConstraint("teacher_id", name="uq_account_teacher"),
+        UniqueConstraint("student_id", name="uq_account_student"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[AccountRole] = mapped_column(Enum(AccountRole), index=True)
+    teacher_id: Mapped[str | None] = mapped_column(ForeignKey("teachers.id"), nullable=True, index=True)
+    student_id: Mapped[str | None] = mapped_column(ForeignKey("students.id"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Exam(Base):
