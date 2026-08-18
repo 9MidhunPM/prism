@@ -33,6 +33,7 @@ class Teacher(Base):
     name: Mapped[str] = mapped_column(String(120))
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ClassCohort(Base):
@@ -105,6 +106,7 @@ class SubmissionPage(Base):
     submission_id: Mapped[str] = mapped_column(ForeignKey("submissions.id"), index=True)
     page_number: Mapped[int] = mapped_column(Integer)
     original_key: Mapped[str] = mapped_column(String(512))
+    mime_type: Mapped[str] = mapped_column(String(100))
     processed_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     image_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -120,6 +122,7 @@ class Answer(Base):
     transcription: Mapped[str] = mapped_column(Text)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     uncertainty: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    prompt_version: Mapped[str] = mapped_column(String(50))
 
 
 class EvidenceRegion(Base):
@@ -144,6 +147,14 @@ class CriterionEvaluation(Base):
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class EvaluationEvidence(Base):
+    __tablename__ = "evaluation_evidence"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    evaluation_id: Mapped[str] = mapped_column(ForeignKey("criterion_evaluations.id"), index=True)
+    page_id: Mapped[str | None] = mapped_column(ForeignKey("submission_pages.id"), nullable=True, index=True)
+    quote: Mapped[str] = mapped_column(Text)
+
+
 class TeacherOverride(Base):
     __tablename__ = "teacher_overrides"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
@@ -152,6 +163,20 @@ class TeacherOverride(Base):
     previous_marks: Mapped[float] = mapped_column(Float)
     new_marks: Mapped[float] = mapped_column(Float)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReviewSuggestion(Base):
+    __tablename__ = "review_suggestions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    evaluation_id: Mapped[str] = mapped_column(ForeignKey("criterion_evaluations.id"), index=True)
+    requested_by_teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
+    comment: Mapped[str] = mapped_column(Text)
+    suggested_marks: Mapped[float] = mapped_column(Float)
+    reason: Mapped[str] = mapped_column(Text)
+    evidence_quotes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    confidence: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
