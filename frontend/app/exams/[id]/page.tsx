@@ -20,7 +20,7 @@ export default function ExamPage({
 
   useEffect(() => {
     params.then(({ id }) =>
-      fetch(`${API}/exams/${id}`)
+      fetch(`${API}/exams/${id}`, { credentials: "include" })
         .then((response) => (response.ok ? response.json() : Promise.reject()))
         .then(setExam)
         .catch(() => setError("This exam could not be loaded.")),
@@ -35,8 +35,8 @@ export default function ExamPage({
       return;
     const timer = window.setInterval(async () => {
       const [submissionResponse, statusResponse] = await Promise.all([
-        fetch(`${API}/submissions/${submission.id}`),
-        fetch(`${API}/submissions/${submission.id}/status`),
+        fetch(`${API}/submissions/${submission.id}`, { credentials: "include" }),
+        fetch(`${API}/submissions/${submission.id}/status`, { credentials: "include" }),
       ]);
       if (submissionResponse.ok) setSubmission(await submissionResponse.json());
       if (statusResponse.ok) setProcessing(await statusResponse.json());
@@ -59,13 +59,14 @@ export default function ExamPage({
     try {
       const response = await fetch(`${API}/exams/${exam.id}/submissions`, {
         method: "POST",
+        credentials: "include",
         body: form,
       });
       if (!response.ok) throw new Error();
       const created = await response.json();
       setSubmission(created);
       const statusResponse = await fetch(
-        `${API}/submissions/${created.id}/status`,
+        `${API}/submissions/${created.id}/status`, { credentials: "include" },
       );
       if (statusResponse.ok) setProcessing(await statusResponse.json());
     } catch {

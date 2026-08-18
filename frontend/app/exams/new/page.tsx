@@ -34,7 +34,7 @@ export default function NewExamPage() {
     }
     setSaving(true);
     try {
-      const response = await fetch(`${API}/exams`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, subject, date: date || null, questions: questions.map((question) => ({ ...question, criteria: question.criteria.map((criterion) => ({ ...criterion, max_marks: Number(criterion.max_marks) })) })) }) });
+      const response = await fetch(`${API}/exams`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, subject, date: date || null, questions: questions.map((question) => ({ ...question, criteria: question.criteria.map((criterion) => ({ ...criterion, max_marks: Number(criterion.max_marks) })) })) }) });
       if (!response.ok) throw new Error("The exam could not be saved.");
       const exam = await response.json();
       setCreatedId(exam.id);

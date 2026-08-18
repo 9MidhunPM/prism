@@ -46,7 +46,7 @@ def init_db() -> None:
     UPLOADS.mkdir(exist_ok=True)
     with connection() as con:
         con.executescript("""
-        CREATE TABLE IF NOT EXISTS exams (id TEXT PRIMARY KEY, title TEXT NOT NULL, subject TEXT NOT NULL, date TEXT, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS exams (id TEXT PRIMARY KEY, title TEXT NOT NULL, subject TEXT NOT NULL, date TEXT, created_at TEXT NOT NULL, teacher_id TEXT);
         CREATE TABLE IF NOT EXISTS teachers (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS questions (id TEXT PRIMARY KEY, exam_id TEXT NOT NULL, number TEXT NOT NULL, text TEXT NOT NULL, max_marks REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS criteria (id TEXT PRIMARY KEY, question_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, max_marks REAL NOT NULL, concept TEXT NOT NULL);
@@ -68,6 +68,9 @@ def init_db() -> None:
         for name, definition in {"page_id": "TEXT", "confidence": "REAL", "visual_regions": "TEXT", "formula_regions": "TEXT"}.items():
             if name not in answer_columns:
                 con.execute(f"ALTER TABLE answers ADD COLUMN {name} {definition}")
+        exam_columns = {row["name"] for row in con.execute("PRAGMA table_info(exams)")}
+        if "teacher_id" not in exam_columns:
+            con.execute("ALTER TABLE exams ADD COLUMN teacher_id TEXT")
 
 
 def normalize_pages(original_path: Path, mime_type: str) -> list[dict]:
@@ -167,6 +170,13 @@ def set_session(response: Response, teacher_id: str) -> None:
     )
 
 
+def require_exam_owner(exam_id: str, teacher_id: str) -> None:
+    with connection() as con:
+        exam = con.execute("SELECT teacher_id FROM exams WHERE id=?", (exam_id,)).fetchone()
+    if not exam or exam["teacher_id"] != teacher_id:
+        raise HTTPException(404, "Exam not found")
+
+
 def exam_detail(exam_id: str) -> dict:
     with connection() as con:
         exam = con.execute("SELECT * FROM exams WHERE id=?", (exam_id,)).fetchone()
@@ -221,10 +231,10 @@ def seed_demo() -> None:
             con.execute("UPDATE submissions SET total_score=? WHERE id=?", (total or 0, sid))
 
 
-def create_exam(payload: ExamInput) -> dict:
+def create_exam(payload: ExamInput, teacher_id: str | None = None) -> dict:
     exam_id = str(uuid.uuid4())
     with connection() as con:
-        con.execute("INSERT INTO exams VALUES (?, ?, ?, ?, ?)", (exam_id, payload.title, payload.subject, payload.date, now()))
+        con.execute("INSERT INTO exams VALUES (?, ?, ?, ?, ?, ?)", (exam_id, payload.title, payload.subject, payload.date, now(), teacher_id))
         for question in payload.questions:
             question_id = str(uuid.uuid4())
             max_marks = sum(c.max_marks for c in question.criteria)
@@ -340,33 +350,35 @@ def me(teacher: dict = Depends(current_teacher)):
 
 
 @app.get("/api/dashboard")
-def dashboard():
+def dashboard(teacher: dict = Depends(current_teacher)):
     with connection() as con:
-        exams = con.execute("SELECT * FROM exams ORDER BY created_at DESC").fetchall()
-        reviews = con.execute("SELECT COUNT(*) count FROM evaluations WHERE needs_review=1 AND teacher_marks IS NULL").fetchone()["count"]
-        submissions = con.execute("""SELECT s.*, st.name student_name, e.title exam_title FROM submissions s JOIN students st ON st.id=s.student_id JOIN exams e ON e.id=s.exam_id ORDER BY s.created_at DESC LIMIT 8""").fetchall()
+        exams = con.execute("SELECT * FROM exams WHERE teacher_id=? ORDER BY created_at DESC", (teacher["id"],)).fetchall()
+        reviews = con.execute("""SELECT COUNT(*) count FROM evaluations ev JOIN submissions s ON s.id=ev.submission_id JOIN exams e ON e.id=s.exam_id WHERE e.teacher_id=? AND ev.needs_review=1 AND ev.teacher_marks IS NULL""", (teacher["id"],)).fetchone()["count"]
+        submissions = con.execute("""SELECT s.*, st.name student_name, e.title exam_title FROM submissions s JOIN students st ON st.id=s.student_id JOIN exams e ON e.id=s.exam_id WHERE e.teacher_id=? ORDER BY s.created_at DESC LIMIT 8""", (teacher["id"],)).fetchall()
     return {"exams": [dict(e) for e in exams], "pending_reviews": reviews, "submissions": [dict(s) for s in submissions]}
 
 
 @app.post("/api/exams")
-def post_exam(payload: ExamInput):
-    return create_exam(payload)
+def post_exam(payload: ExamInput, teacher: dict = Depends(current_teacher)):
+    return create_exam(payload, teacher["id"])
 
 
 @app.get("/api/exams")
-def get_exams():
+def get_exams(teacher: dict = Depends(current_teacher)):
     with connection() as con:
-        ids = [row["id"] for row in con.execute("SELECT id FROM exams ORDER BY created_at DESC")]
+        ids = [row["id"] for row in con.execute("SELECT id FROM exams WHERE teacher_id=? ORDER BY created_at DESC", (teacher["id"],))]
     return [exam_detail(exam_id) for exam_id in ids]
 
 
 @app.get("/api/exams/{exam_id}")
-def get_exam(exam_id: str):
+def get_exam(exam_id: str, teacher: dict = Depends(current_teacher)):
+    require_exam_owner(exam_id, teacher["id"])
     return exam_detail(exam_id)
 
 
 @app.post("/api/exams/{exam_id}/submissions")
-async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, student_name: str = Form(...), file: UploadFile = File(...)):
+async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, student_name: str = Form(...), file: UploadFile = File(...), teacher: dict = Depends(current_teacher)):
+    require_exam_owner(exam_id, teacher["id"])
     exam_detail(exam_id)
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(415, "Upload a JPEG, PNG, or PDF file.")

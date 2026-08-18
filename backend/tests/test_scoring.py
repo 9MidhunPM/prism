@@ -28,7 +28,7 @@ def test_upload_rejects_unsupported_file_type(tmp_path, monkeypatch):
     exam = create_exam(ExamInput(title="T", subject="S", questions=[QuestionInput(number="Q1", text="Question", criteria=[CriterionInput(title="C", description="D", max_marks=2, concept="X")])]))
     file = UploadFile(filename="paper.txt", file=io.BytesIO(b"not an exam"), headers=Headers({"content-type": "text/plain"}))
     with pytest.raises(HTTPException) as error:
-        asyncio.run(upload_submission(BackgroundTasks(), exam["id"], "Student", file))
+        asyncio.run(upload_submission(BackgroundTasks(), exam["id"], "Student", file, teacher={"id": None}))
     assert error.value.status_code == 415
 
 
@@ -43,7 +43,7 @@ def test_pdf_upload_creates_a_normalized_record_for_every_page(tmp_path, monkeyp
     document.new_page()
     document.new_page()
     file = UploadFile(filename="paper.pdf", file=io.BytesIO(document.tobytes()), headers=Headers({"content-type": "application/pdf"}))
-    submission = asyncio.run(upload_submission(BackgroundTasks(), exam["id"], "Student", file))
+    submission = asyncio.run(upload_submission(BackgroundTasks(), exam["id"], "Student", file, teacher={"id": None}))
     with main.connection() as con:
         pages = con.execute("SELECT processed_path, width, height FROM pages WHERE submission_id=? ORDER BY page_number", (submission["id"],)).fetchall()
         job = con.execute("SELECT stage, attempts FROM processing_jobs WHERE submission_id=?", (submission["id"],)).fetchone()

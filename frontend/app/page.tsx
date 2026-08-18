@@ -19,7 +19,7 @@ export default function Home() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch(`${API}/dashboard`).then((response) => response.ok ? response.json() : Promise.reject()).then(setData).catch(() => setError("Start the API at localhost:8000 to load the demo workspace."));
+    fetch(`${API}/dashboard`, { credentials: "include" }).then((response) => response.ok ? response.json() : Promise.reject()).then(setData).catch(() => setError("Sign in to load your workspace."));
   }, []);
 
   useEffect(() => {
@@ -53,7 +53,7 @@ export default function Home() {
       </aside>
       <section id="workspace" className="min-w-0 px-5 py-7 sm:px-8">
         <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="mb-1 text-sm text-[#667174]">Teaching workspace</p><h1 className="font-serif text-3xl font-semibold tracking-tight">Assessment review</h1></div><p className="text-base text-[#566164] sm:text-sm">Evidence-backed marks. Teacher-approved decisions.</p></div>
-        {error && <p className="mb-5 rounded-md border border-[#a15130]/25 bg-[#fff4e9] p-3 text-sm text-[#8b3d20]">{error}</p>}
+        {error && <p className="mb-5 rounded-md border border-[#a15130]/25 bg-[#fff4e9] p-3 text-sm text-[#8b3d20]">{error} <Link href="/login" className="font-medium underline underline-offset-2">Open sign in</Link></p>}
         <div className="@container mb-8 grid gap-px overflow-hidden rounded-lg bg-[#172126]/10 sm:grid-cols-3">
           <Metric label="Pending review" value={data ? String(data.pending_reviews) : "-"} note="criteria need attention" />
           <Metric label="Completed papers" value={data ? String(data.submissions.filter((item) => item.status !== "failed").length) : "-"} note="in the current cohort" />
