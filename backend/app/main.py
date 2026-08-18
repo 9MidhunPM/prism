@@ -414,8 +414,20 @@ def override(evaluation_id: str, payload: OverrideInput):
         previous = row["teacher_marks"] if row["teacher_marks"] is not None else row["ai_marks"]
         con.execute("UPDATE evaluations SET teacher_marks=? WHERE id=?", (payload.marks, evaluation_id))
         con.execute("INSERT INTO overrides VALUES (?, ?, ?, ?, ?, ?)", (str(uuid.uuid4()), evaluation_id, previous, payload.marks, payload.reason, now()))
-        score_submission(row["submission_id"])
+        total = con.execute("SELECT SUM(COALESCE(teacher_marks, ai_marks)) AS total FROM evaluations WHERE submission_id=?", (row["submission_id"],)).fetchone()["total"]
+        con.execute("UPDATE submissions SET total_score=? WHERE id=?", (total or 0, row["submission_id"]))
     return {"status": "overridden"}
+
+
+@app.get("/api/evaluations/{evaluation_id}/history")
+def evaluation_history(evaluation_id: str):
+    with connection() as con:
+        evaluation = con.execute("SELECT id FROM evaluations WHERE id=?", (evaluation_id,)).fetchone()
+        if not evaluation:
+            raise HTTPException(404, "Evaluation not found")
+        overrides = [dict(row) for row in con.execute("SELECT previous_marks, new_marks, reason, created_at FROM overrides WHERE evaluation_id=? ORDER BY created_at DESC", (evaluation_id,))]
+        reviews = [dict(row) for row in con.execute("SELECT suggested_marks, reason, status, created_at FROM reviews WHERE evaluation_id=? ORDER BY created_at DESC", (evaluation_id,))]
+    return {"overrides": overrides, "reviews": reviews}
 
 
 @app.get("/api/students/{student_id}/profile")
