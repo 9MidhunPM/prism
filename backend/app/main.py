@@ -17,7 +17,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 
 from . import database
-from .ai import PerceptionResult, answer_teacher_question, grade_criterion, perceive_page, review_criterion
+from .ai import (EXAM_IMPORT_VERSION, PerceptionResult, answer_teacher_question,
+                 grade_criterion, import_exam_pages, perceive_page, review_criterion)
 from .auth import create_session, hash_password, read_session_data, verify_password
 from .demo import seed_demo_accounts
 from .models import (AIArtifact, Account, AccountRole, Answer, ClassCohort, CriterionEvaluation, EvaluationEvidence, Exam,
@@ -123,6 +124,23 @@ class TeacherCredentials(BaseModel):
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=12, max_length=256)
     name: str | None = Field(default=None, min_length=2, max_length=120)
+
+
+def imported_draft(result) -> dict:
+    warnings = list(result.warnings)
+    questions = []
+    for question in result.questions:
+        criterion_total = sum(criterion.max_marks for criterion in question.criteria)
+        if question.max_marks is not None and round(criterion_total, 2) != round(question.max_marks, 2):
+            warnings.append(f"{question.number}: suggested criteria total {criterion_total:g}, but the paper shows {question.max_marks:g} marks.")
+        questions.append({
+            "number": question.number,
+            "text": question.text,
+            "max_marks": question.max_marks,
+            "confidence": question.confidence,
+            "criteria": [criterion.model_dump() for criterion in question.criteria],
+        })
+    return {"title": result.title, "subject": result.subject, "questions": questions, "warnings": list(dict.fromkeys(warnings)), "prompt_version": EXAM_IMPORT_VERSION}
 
 
 def current_account(session_token: str | None = Cookie(default=None, alias="prism_session")) -> dict:
@@ -385,6 +403,44 @@ def dashboard(teacher: dict = Depends(current_teacher)):
 def post_exam(payload: ExamInput, teacher: dict = Depends(current_teacher)): return create_exam(payload, teacher["id"])
 
 
+@app.post("/api/exam-drafts/import")
+async def import_exam_draft(file: UploadFile = File(...), teacher: dict = Depends(current_teacher)):
+    if not settings.openai_enabled:
+        raise HTTPException(503, "OPENAI_API_KEY is required to import a question paper.")
+    if file.content_type not in ALLOWED_TYPES:
+        raise HTTPException(415, "Upload a JPEG, PNG, or PDF question paper.")
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(400, "The uploaded question paper is empty.")
+    if len(contents) > settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(413, f"Files must be smaller than {settings.max_upload_mb} MB.")
+    extension = {"image/jpeg": ".jpg", "image/png": ".png", "application/pdf": ".pdf"}[file.content_type]
+    path = UPLOADS / f"exam-draft-{uuid.uuid4()}{extension}"
+    path.write_bytes(contents)
+    pages = normalize_pages(path, file.content_type)
+    image_hash = hashlib.sha256(contents).hexdigest()
+    with session() as db:
+        artifact = db.scalar(select(AIArtifact).where(
+            AIArtifact.operation == "exam_import",
+            AIArtifact.prompt_version == EXAM_IMPORT_VERSION,
+            AIArtifact.input_hash == image_hash,
+        ).order_by(AIArtifact.created_at.desc()))
+    if artifact:
+        return {**artifact.output, "cached": True}
+    result = await import_exam_pages([(page["processed_key"], "image/jpeg") for page in pages])
+    draft = imported_draft(result)
+    with session() as db:
+        db.add(AIArtifact(
+            operation="exam_import",
+            model=MODEL,
+            prompt_version=EXAM_IMPORT_VERSION,
+            input_hash=image_hash,
+            output=draft,
+        ))
+        db.commit()
+    return {**draft, "cached": False}
+
+
 @app.get("/api/exams")
 def get_exams(teacher: dict = Depends(current_teacher)):
     with session() as db: ids = db.scalars(select(Exam.id).where(Exam.teacher_id == teacher["id"]).order_by(Exam.created_at.desc())).all()
@@ -565,10 +621,40 @@ def own_profile(student: dict = Depends(current_student)):
 @app.get("/api/exams/{exam_id}/analytics")
 def analytics(exam_id: str, teacher: dict = Depends(current_teacher)):
     with session() as db:
-        owned_exam(db, exam_id, teacher["id"]); concepts = {}
-        for ev, criterion in concept_rows(db, teacher["id"], exam_id=exam_id):
-            name = criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized"; bucket = concepts.setdefault(name, [0, 0, 0, 0]); bucket[0] += ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks; bucket[1] += criterion.max_marks; bucket[2] += 1; bucket[3] += ev.needs_review
-        return {"concepts": [{"name": name, "mastery": round(value[0] / value[1] * 100), "attempts": value[2], "review_rate": round(value[3] / value[2] * 100)} for name, value in concepts.items()]}
+        exam = owned_exam(db, exam_id, teacher["id"])
+        submissions = db.scalars(select(Submission).where(Submission.exam_id == exam_id)).all()
+        concepts: dict[str, list[float]] = {}
+        questions: dict[str, list[float | str]] = {}
+        criteria: dict[str, list[float | str]] = {}
+        for evaluation, criterion, question in db.execute(
+            select(CriterionEvaluation, RubricCriterion, Question)
+            .select_from(CriterionEvaluation)
+            .join(RubricCriterion, CriterionEvaluation.criterion_id == RubricCriterion.id)
+            .join(Question, RubricCriterion.question_id == Question.id)
+            .join(Answer, CriterionEvaluation.answer_id == Answer.id)
+            .where(Answer.submission_id.in_([submission.id for submission in submissions] or ["-"]))
+        ):
+            marks = evaluation.teacher_marks if evaluation.teacher_marks is not None else evaluation.ai_marks
+            concept = criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized"
+            concept_bucket = concepts.setdefault(concept, [0, 0, 0, 0])
+            concept_bucket[0] += marks; concept_bucket[1] += criterion.max_marks; concept_bucket[2] += 1; concept_bucket[3] += int(evaluation.needs_review)
+            question_bucket = questions.setdefault(question.number, [question.text, 0, 0, 0])
+            question_bucket[1] += marks; question_bucket[2] += criterion.max_marks; question_bucket[3] += 1
+            criterion_bucket = criteria.setdefault(criterion.title, [question.number, 0, 0, 0])
+            criterion_bucket[1] += marks; criterion_bucket[2] += criterion.max_marks; criterion_bucket[3] += int(marks < criterion.max_marks)
+        evaluated = [submission for submission in submissions if submission.status in {SubmissionStatus.COMPLETED, SubmissionStatus.REVIEW_REQUIRED}]
+        average_score = round(sum(submission.total_score for submission in evaluated) / len(evaluated), 2) if evaluated else 0
+        return {
+            "exam": {"id": exam.id, "title": exam.title, "subject": exam.subject, "total_marks": exam.total_marks},
+            "submission_count": len(submissions),
+            "evaluated_count": len(evaluated),
+            "average_score": average_score,
+            "average_percentage": round(average_score / exam.total_marks * 100) if exam.total_marks else 0,
+            "review_rate": round(sum(1 for submission in evaluated if submission.status == SubmissionStatus.REVIEW_REQUIRED) / len(evaluated) * 100) if evaluated else 0,
+            "concepts": [{"name": name, "mastery": round(value[0] / value[1] * 100) if value[1] else 0, "attempts": value[2], "review_rate": round(value[3] / value[2] * 100) if value[2] else 0} for name, value in concepts.items()],
+            "questions": [{"number": name, "text": value[0], "mastery": round(value[1] / value[2] * 100) if value[2] else 0, "attempts": value[3]} for name, value in questions.items()],
+            "criteria": [{"title": name, "question_number": value[0], "mastery": round(value[1] / value[2] * 100) if value[2] else 0, "failure_rate": round(value[3] / len(evaluated) * 100) if evaluated else 0} for name, value in criteria.items()],
+        }
 
 
 @app.post("/api/assistant/query")

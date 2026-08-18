@@ -17,6 +17,7 @@ REVIEW_VERSION = "review_v1"
 STUDENT_PROFILE_VERSION = "student_profile_v1"
 CLASS_ANALYSIS_VERSION = "class_analysis_v1"
 TEACHER_CHAT_VERSION = "teacher_chat_v1"
+EXAM_IMPORT_VERSION = "exam_import_v1"
 
 
 def client() -> AsyncOpenAI:
@@ -68,6 +69,28 @@ class ReviewResult(BaseModel):
 class TeacherAnswer(BaseModel):
     answer: str
     sources: list[str]
+
+
+class ImportedCriterion(BaseModel):
+    title: str
+    description: str
+    max_marks: float = Field(gt=0)
+    concept: str
+
+
+class ImportedQuestion(BaseModel):
+    number: str
+    text: str
+    max_marks: float | None = Field(default=None, gt=0)
+    criteria: list[ImportedCriterion]
+    confidence: float = Field(ge=0, le=1)
+
+
+class ExamImportResult(BaseModel):
+    title: str
+    subject: str
+    questions: list[ImportedQuestion]
+    warnings: list[str] = []
 
 
 def image_content(path: str, mime_type: str) -> dict:
@@ -130,5 +153,20 @@ Return the names of the statistics you used in sources."""
         model=MODEL,
         input=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
         text_format=TeacherAnswer,
+    )
+    return response.output_parsed
+
+
+async def import_exam_pages(pages: list[tuple[str, str]]) -> ExamImportResult:
+    openai_client = client()
+    prompt = f"""You are PRISM's exam-paper import operation ({EXAM_IMPORT_VERSION}).
+Extract only the visible assessment metadata, questions, visible marks, and instructions from the supplied question-paper pages. Preserve wording, mathematical notation, and question identifiers exactly. Never answer the questions or invent missing marks.
+Suggest concise rubric criteria that a teacher must review before saving. Each criterion must have a positive mark allocation and a concept label. When a question's visible maximum mark is unavailable, return null for question max_marks and add a warning. When suggested criterion marks do not add to a visible question maximum, add a warning. Return all questions in paper order."""
+    content = [{"type": "input_text", "text": prompt}]
+    content.extend(image_content(path, mime_type) for path, mime_type in pages)
+    response = await openai_client.responses.parse(
+        model=MODEL,
+        input=[{"role": "user", "content": content}],
+        text_format=ExamImportResult,
     )
     return response.output_parsed

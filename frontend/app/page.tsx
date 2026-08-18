@@ -24,19 +24,19 @@ export default function Home() {
 
   useEffect(() => {
     if (!selected) return;
-    fetch(`${API}/submissions/${selected.id}`).then((response) => response.json()).then(setDetail);
+    fetch(`${API}/submissions/${selected.id}`, { credentials: "include" }).then((response) => response.json()).then(setDetail);
   }, [selected]);
 
   const review = async (evaluationId: string) => {
-    const response = await fetch(`${API}/evaluations/${evaluationId}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ comment: "Please reconsider the visual and written evidence." }) });
+    const response = await fetch(`${API}/evaluations/${evaluationId}/review`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ comment: "Please reconsider the visual and written evidence." }) });
     const item = await response.json();
     setDetail((current: any) => ({ ...current, review: item }));
   };
 
   const decide = async (decision: "accept" | "reject") => {
     if (!detail?.review) return;
-    await fetch(`${API}/reviews/${detail.review.id}/${decision}`, { method: "POST" });
-    const response = await fetch(`${API}/submissions/${selected?.id}`);
+    await fetch(`${API}/reviews/${detail.review.id}/${decision}`, { method: "POST", credentials: "include" });
+    const response = await fetch(`${API}/submissions/${selected?.id}`, { credentials: "include" });
     setDetail(await response.json());
   };
 
@@ -49,7 +49,7 @@ export default function Home() {
     </header>
     <div className="mx-auto grid max-w-7xl lg:grid-cols-[210px_1fr]">
       <aside className="hidden border-r border-[#172126]/10 px-4 py-7 lg:block">
-        <nav className="space-y-1 text-sm"><a className="block rounded-md bg-[#173f4c]/8 px-3 py-2 text-[#173f4c]" href="#workspace">Workspace</a><a className="block rounded-md px-3 py-2 text-[#566164] hover:bg-[#173f4c]/5" href="#exams">Exams</a><a className="block rounded-md px-3 py-2 text-[#566164] hover:bg-[#173f4c]/5" href="#insights">Class insights</a></nav>
+        <nav className="space-y-1 text-sm"><a className="block rounded-md bg-[#173f4c]/8 px-3 py-2 text-[#173f4c]" href="#workspace">Workspace</a><Link className="block rounded-md px-3 py-2 text-[#566164] hover:bg-[#173f4c]/5" href="/exams">Exams</Link>{data?.exams[0] ? <Link className="block rounded-md px-3 py-2 text-[#566164] hover:bg-[#173f4c]/5" href={`/exams/${data.exams[0].id}/insights`}>Class insights</Link> : <span className="block cursor-not-allowed rounded-md px-3 py-2 text-[#667174]" aria-disabled="true">Class insights</span>}</nav>
       </aside>
       <section id="workspace" className="min-w-0 px-5 py-7 sm:px-8">
         <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="mb-1 text-sm text-[#667174]">Teaching workspace</p><h1 className="font-serif text-3xl font-semibold tracking-tight">Assessment review</h1></div><p className="text-base text-[#566164] sm:text-sm">Evidence-backed marks. Teacher-approved decisions.</p></div>

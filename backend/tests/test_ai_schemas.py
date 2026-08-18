@@ -1,4 +1,5 @@
-from app.ai import PerceptionResult
+from app.ai import ExamImportResult, PerceptionResult
+from app.main import imported_draft
 
 
 def test_perception_preserves_structured_uncertainty_and_regions():
@@ -6,3 +7,10 @@ def test_perception_preserves_structured_uncertainty_and_regions():
     answer = result.answers[0]
     assert answer.uncertain_segments[0].alternatives == ["descent"]
     assert answer.visual_regions[0].kind == "diagram"
+
+
+def test_exam_import_draft_warns_when_rubric_marks_do_not_match_visible_marks():
+    result = ExamImportResult.model_validate({"title": "Science quiz", "subject": "Science", "questions": [{"number": "Q1", "text": "Explain photosynthesis.", "max_marks": 5, "confidence": 0.81, "criteria": [{"title": "Inputs", "description": "Names inputs.", "max_marks": 2, "concept": "Photosynthesis"}, {"title": "Process", "description": "Explains process.", "max_marks": 2, "concept": "Photosynthesis"}]}]})
+    draft = imported_draft(result)
+    assert draft["questions"][0]["max_marks"] == 5
+    assert "criteria total 4, but the paper shows 5 marks" in draft["warnings"][0]
