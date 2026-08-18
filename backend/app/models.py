@@ -194,6 +194,7 @@ class CriterionEvaluation(Base):
     reason: Mapped[str] = mapped_column(Text)
     confidence: Mapped[float] = mapped_column(Float)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    review_severity: Mapped[str | None] = mapped_column(String(30), nullable=True)
     review_resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     review_resolution: Mapped[str | None] = mapped_column(String(20), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

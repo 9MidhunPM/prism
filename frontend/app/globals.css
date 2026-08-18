@@ -12,6 +12,8 @@
   --brand-soft: #e0eeeb;
   --review: #9d552d;
   --review-soft: #fff1e6;
+  --danger: #9d3d3d;
+  --danger-soft: #f9e9e7;
   --success: #3f6c58;
   --success-soft: #e8f1ea;
   --shadow: 0 14px 32px rgb(30 42 43 / 0.08);
@@ -173,6 +175,10 @@ body {
 .status-review {
   background: var(--review-soft);
   color: var(--review);
+}
+.status-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .status-success {
   background: var(--success-soft);

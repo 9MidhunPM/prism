@@ -229,8 +229,16 @@ export default function ExamPage({
       )
     )
       return;
-    await api.delete(`/api/exams/${exam.id}`);
-    router.replace("/exams");
+    try {
+      await api.delete(`/api/exams/${exam.id}`);
+      router.replace("/exams");
+    } catch (reason) {
+      setUploadError(
+        reason instanceof Error
+          ? reason.message
+          : "The assessment could not be deleted.",
+      );
+    }
   }
 
   if (error)

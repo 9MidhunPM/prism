@@ -8,7 +8,10 @@ from app import models  # noqa: F401 - imports all mapped models for metadata.
 from app.settings import get_settings
 
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# Tests and recovery tooling can explicitly opt into Alembic's configured URL;
+# normal application startup always uses DATABASE_URL.
+if not config.attributes.get("use_config_url"):
+    config.set_main_option("sqlalchemy.url", get_settings().database_url)
 target_metadata = Base.metadata
 
 

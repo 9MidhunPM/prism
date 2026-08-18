@@ -33,6 +33,13 @@ UPLOADS = settings.upload_root
 MODEL = settings.openai_model
 REVIEW_THRESHOLD = settings.ai_review_threshold
 ALLOWED_TYPES = {"image/jpeg", "image/png", "application/pdf"}
+ACTIVE_PROCESSING_STAGES = {
+    SubmissionStatus.UPLOADED,
+    SubmissionStatus.PREPROCESSING,
+    SubmissionStatus.TRANSCRIBING,
+    SubmissionStatus.STRUCTURED,
+    SubmissionStatus.GRADING,
+}
 
 
 def init_storage() -> None:
@@ -379,11 +386,17 @@ def clear_submission_results(db, submission_id: str) -> None:
             db.delete(review)
         for override in db.scalars(select(TeacherOverride).where(TeacherOverride.evaluation_id == evaluation.id)):
             db.delete(override)
+    db.flush()
+    for evaluation in evaluations:
         db.delete(evaluation)
+    db.flush()
     for answer in db.scalars(select(Answer).where(Answer.submission_id == submission_id)):
         for region in db.scalars(select(EvidenceRegion).where(EvidenceRegion.answer_id == answer.id)):
             db.delete(region)
+    db.flush()
+    for answer in db.scalars(select(Answer).where(Answer.submission_id == submission_id)):
         db.delete(answer)
+    db.flush()
     for artifact in db.scalars(select(AIArtifact).where(AIArtifact.submission_id == submission_id)):
         db.delete(artifact)
     submission = db.get(Submission, submission_id)
@@ -395,12 +408,13 @@ def recalculate_submission_state(db, submission_id: str) -> SubmissionStatus:
     submission = db.get(Submission, submission_id)
     if not submission:
         raise HTTPException(404, "Submission not found")
+    db.flush()
     unresolved = db.scalar(
         select(CriterionEvaluation.id)
         .join(Answer)
         .where(
             Answer.submission_id == submission_id,
-            CriterionEvaluation.needs_review.is_(True),
+            CriterionEvaluation.review_severity == "review_required",
             CriterionEvaluation.review_resolved.is_(False),
         )
         .limit(1)
@@ -439,9 +453,12 @@ def delete_submission_data(db, submission: Submission) -> set[str]:
     job = db.scalar(select(ProcessingJob).where(ProcessingJob.submission_id == submission.id))
     if job:
         db.delete(job)
+    db.flush()
     for page in pages:
         db.delete(page)
+    db.flush()
     db.delete(submission)
+    db.flush()
     return paths
 
 
@@ -515,8 +532,9 @@ async def process_submission(submission_id: str) -> None:
             for criterion in criteria:
                 result = await grade_criterion(page.processed_key or page.original_key, "image/jpeg" if page.processed_key else page.mime_type, question.text, criterion_data(criterion), transcription)
                 with session() as db:
-                    requires_review = result.needs_review or result.confidence < REVIEW_THRESHOLD or any(answer.uncertainty or (answer.confidence or 0) < REVIEW_THRESHOLD for answer in mapped_answers)
-                    evaluation = CriterionEvaluation(answer_id=mapped_answers[0].id, criterion_id=criterion.id, ai_marks=min(criterion.max_marks, max(0, result.awarded_marks)), reason=result.reason, confidence=result.confidence, needs_review=requires_review, review_resolved=not requires_review)
+                    low_confidence = result.confidence < REVIEW_THRESHOLD or any(answer.uncertainty or (answer.confidence or 0) < REVIEW_THRESHOLD for answer in mapped_answers)
+                    review_severity = "review_required" if result.needs_review else "review_recommended" if low_confidence else None
+                    evaluation = CriterionEvaluation(answer_id=mapped_answers[0].id, criterion_id=criterion.id, ai_marks=min(criterion.max_marks, max(0, result.awarded_marks)), reason=result.reason, confidence=result.confidence, needs_review=review_severity is not None, review_severity=review_severity, review_resolved=review_severity is None)
                     db.add(evaluation)
                     db.flush()
                     for quote in result.evidence_quotes:
@@ -524,7 +542,7 @@ async def process_submission(submission_id: str) -> None:
                     db.commit()
         with session() as db:
             submission = db.get(Submission, submission_id)
-            review_needed = db.scalar(select(CriterionEvaluation.id).join(Answer).where(Answer.submission_id == submission_id, CriterionEvaluation.needs_review.is_(True), CriterionEvaluation.review_resolved.is_(False)).limit(1)) is not None
+            review_needed = db.scalar(select(CriterionEvaluation.id).join(Answer).where(Answer.submission_id == submission_id, CriterionEvaluation.review_severity == "review_required", CriterionEvaluation.review_resolved.is_(False)).limit(1)) is not None
             score_submission(db, submission)
             db.commit()
         set_processing_stage(submission_id, SubmissionStatus.REVIEW_REQUIRED if review_needed else SubmissionStatus.COMPLETED)
@@ -626,9 +644,37 @@ def me(account: dict = Depends(current_account)):
 def dashboard(teacher: dict = Depends(current_teacher)):
     with session() as db:
         exams = db.scalars(select(Exam).where(Exam.teacher_id == teacher["id"], Exam.archived_at.is_(None)).order_by(Exam.created_at.desc())).all()
-        pending = db.scalar(select(func.count()).select_from(CriterionEvaluation).join(Answer).join(Submission).join(Student).join(ClassCohort, Student.class_id == ClassCohort.id).join(Exam).where(Exam.teacher_id == teacher["id"], Submission.archived_at.is_(None), Student.archived_at.is_(None), ClassCohort.archived_at.is_(None), Exam.archived_at.is_(None), CriterionEvaluation.needs_review.is_(True), CriterionEvaluation.review_resolved.is_(False))) or 0
+        all_rows = db.execute(active_submission_rows(db, teacher["id"])).all()
+        completed = [submission for submission, _, _ in all_rows if submission.status == SubmissionStatus.COMPLETED]
+        in_progress = [submission for submission, _, _ in all_rows if submission.status in ACTIVE_PROCESSING_STAGES]
+        failed = [submission for submission, _, _ in all_rows if submission.status == SubmissionStatus.FAILED]
+        evaluated = [(submission, exam) for submission, _, exam in all_rows if submission.status in {SubmissionStatus.COMPLETED, SubmissionStatus.REVIEW_REQUIRED}]
+        average_percentage = round(sum(submission.total_score / exam.total_marks * 100 for submission, exam in evaluated if exam.total_marks) / len(evaluated)) if evaluated else 0
+        evaluation_rows = db.execute(
+            select(CriterionEvaluation, RubricCriterion)
+            .select_from(CriterionEvaluation)
+            .join(RubricCriterion, CriterionEvaluation.criterion_id == RubricCriterion.id)
+            .join(Answer, CriterionEvaluation.answer_id == Answer.id)
+            .join(Submission, Answer.submission_id == Submission.id)
+            .join(Student, Submission.student_id == Student.id)
+            .join(ClassCohort, Student.class_id == ClassCohort.id)
+            .join(Exam, Submission.exam_id == Exam.id)
+            .where(Exam.teacher_id == teacher["id"], Submission.archived_at.is_(None), Student.archived_at.is_(None), ClassCohort.archived_at.is_(None), Exam.archived_at.is_(None))
+        ).all()
+        required_reviews = sum(1 for evaluation, _ in evaluation_rows if evaluation.review_severity == "review_required" and not evaluation.review_resolved)
+        recommended_reviews = sum(1 for evaluation, _ in evaluation_rows if evaluation.review_severity == "review_recommended" and not evaluation.review_resolved)
+        concepts: dict[str, list[float]] = {}
+        for evaluation, criterion in evaluation_rows:
+            name = criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized"
+            bucket = concepts.setdefault(name, [0, 0, 0, 0])
+            bucket[0] += evaluation.teacher_marks if evaluation.teacher_marks is not None else evaluation.ai_marks
+            bucket[1] += criterion.max_marks
+            bucket[2] += int(evaluation.review_severity == "review_required" and not evaluation.review_resolved)
+            bucket[3] += int(evaluation.review_severity == "review_recommended" and not evaluation.review_resolved)
+        attention = [{"name": name, "mastery": round(score / maximum * 100) if maximum else 0, "required_reviews": int(required), "recommended_reviews": int(recommended)} for name, (score, maximum, required, recommended) in concepts.items()]
+        attention.sort(key=lambda item: (-item["required_reviews"], -item["recommended_reviews"], item["mastery"], item["name"]))
         rows = db.execute(active_submission_rows(db, teacher["id"]).order_by(Submission.created_at.desc()).limit(8)).all()
-        return {"exams": [{"id": e.id, "title": e.title, "subject": e.subject, "date": e.date, "created_at": e.created_at, "teacher_id": e.teacher_id, "class_id": e.class_id} for e in exams], "pending_reviews": pending, "submissions": [submission_summary(s, st, ex) for s, st, ex in rows]}
+        return {"exams": [{"id": e.id, "title": e.title, "subject": e.subject, "date": e.date, "created_at": e.created_at, "teacher_id": e.teacher_id, "class_id": e.class_id} for e in exams], "metrics": {"active_exams": len(exams), "total_papers": len(all_rows), "completed_papers": len(completed), "in_progress_papers": len(in_progress), "failed_papers": len(failed), "average_percentage": average_percentage, "required_reviews": required_reviews, "recommended_reviews": recommended_reviews}, "pending_reviews": required_reviews + recommended_reviews, "attention": attention[:4], "submissions": [submission_summary(s, st, ex) for s, st, ex in rows]}
 
 
 @app.post("/api/exams")
@@ -853,13 +899,18 @@ def archive_exam(exam_id: str, archived: bool = True, teacher: dict = Depends(cu
 def delete_exam(exam_id: str, teacher: dict = Depends(current_teacher)):
     with session() as db:
         exam = owned_exam(db, exam_id, teacher["id"])
+        active_submission = db.scalar(select(Submission.id).join(ProcessingJob).where(Submission.exam_id == exam.id, ProcessingJob.stage.in_(ACTIVE_PROCESSING_STAGES)).limit(1))
+        if active_submission:
+            raise HTTPException(409, "Wait for active paper processing to finish before deleting this exam.")
         paths: set[str] = set()
         for submission in db.scalars(select(Submission).where(Submission.exam_id == exam.id)).all():
             paths.update(delete_submission_data(db, submission))
         for criterion in db.scalars(select(RubricCriterion).join(Question).where(Question.exam_id == exam.id)):
             db.delete(criterion)
+        db.flush()
         for question in db.scalars(select(Question).where(Question.exam_id == exam.id)):
             db.delete(question)
+        db.flush()
         db.delete(exam)
         db.commit()
         remove_unreferenced_media(db, paths)
@@ -973,7 +1024,7 @@ def get_submission(submission_id: str, teacher: dict = Depends(current_teacher))
         evaluations = []
         for ev, criterion, question in db.execute(select(CriterionEvaluation, RubricCriterion, Question).select_from(CriterionEvaluation).join(RubricCriterion, CriterionEvaluation.criterion_id == RubricCriterion.id).join(Question, RubricCriterion.question_id == Question.id).join(Answer, CriterionEvaluation.answer_id == Answer.id).where(Answer.submission_id == submission_id).order_by(Question.number)):
             pending = db.scalar(select(ReviewSuggestion).where(ReviewSuggestion.evaluation_id == ev.id, ReviewSuggestion.status == "pending").order_by(ReviewSuggestion.created_at.desc()))
-            evaluations.append({"id": ev.id, "ai_marks": ev.ai_marks, "teacher_marks": ev.teacher_marks, "reason": ev.reason, "confidence": ev.confidence, "needs_review": ev.needs_review, "review_resolved": ev.review_resolved, "review_resolution": ev.review_resolution, "criterion_title": criterion.title, "criterion_description": criterion.description, "max_marks": criterion.max_marks, "concept": criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized", "question_id": question.id, "question_number": question.number, "question_text": question.text, "evidence": [{"page_id": evidence.page_id, "page": p.page_number if (p := db.get(SubmissionPage, evidence.page_id)) else None, "quote": evidence.quote} for evidence in db.scalars(select(EvaluationEvidence).where(EvaluationEvidence.evaluation_id == ev.id))], "pending_review": {"id": pending.id, "suggested_marks": pending.suggested_marks, "reason": pending.reason, "confidence": pending.confidence} if pending else None, "effective_marks": ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks})
+            evaluations.append({"id": ev.id, "ai_marks": ev.ai_marks, "teacher_marks": ev.teacher_marks, "reason": ev.reason, "confidence": ev.confidence, "needs_review": ev.needs_review, "review_severity": ev.review_severity, "review_resolved": ev.review_resolved, "review_resolution": ev.review_resolution, "criterion_title": criterion.title, "criterion_description": criterion.description, "max_marks": criterion.max_marks, "concept": criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized", "question_id": question.id, "question_number": question.number, "question_text": question.text, "evidence": [{"page_id": evidence.page_id, "page": p.page_number if (p := db.get(SubmissionPage, evidence.page_id)) else None, "quote": evidence.quote} for evidence in db.scalars(select(EvaluationEvidence).where(EvaluationEvidence.evaluation_id == ev.id))], "pending_review": {"id": pending.id, "suggested_marks": pending.suggested_marks, "reason": pending.reason, "confidence": pending.confidence} if pending else None, "effective_marks": ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks})
         return {"id": submission.id, "exam_id": submission.exam_id, "student_id": submission.student_id, "status": submission.status.value, "total_score": submission.total_score, "created_at": submission.created_at, "error": submission.error, "student_name": student.name, "exam_title": exam.title, "pages": pages, "answers": answers, "evaluations": evaluations}
 
 

@@ -9,7 +9,8 @@ COPY app ./app
 COPY docker-entrypoint.sh /usr/local/bin/prism-api
 RUN chmod 755 /usr/local/bin/prism-api && mkdir -p /app/data/uploads/processed
 
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    UPLOAD_ROOT=/app/data/uploads
 EXPOSE 80
 VOLUME ["/app/data/uploads"]
 ENTRYPOINT ["/usr/local/bin/prism-api"]
