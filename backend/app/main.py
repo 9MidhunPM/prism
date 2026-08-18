@@ -318,6 +318,30 @@ async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, stu
     return {"id": submission_id, "status": "uploaded"}
 
 
+@app.post("/api/submissions/{submission_id}/process")
+async def start_processing(submission_id: str, background_tasks: BackgroundTasks):
+    with connection() as con:
+        submission = con.execute("SELECT status FROM submissions WHERE id=?", (submission_id,)).fetchone()
+    if not submission:
+        raise HTTPException(404, "Submission not found")
+    if submission["status"] in {"preprocessing", "transcribing", "grading"}:
+        raise HTTPException(409, "Submission processing is already in progress.")
+    background_tasks.add_task(process_submission, submission_id)
+    return {"id": submission_id, "status": "queued"}
+
+
+@app.post("/api/submissions/{submission_id}/retry")
+async def retry_processing(submission_id: str, background_tasks: BackgroundTasks):
+    with connection() as con:
+        submission = con.execute("SELECT status FROM submissions WHERE id=?", (submission_id,)).fetchone()
+    if not submission:
+        raise HTTPException(404, "Submission not found")
+    if submission["status"] not in {"failed", "review_required", "completed"}:
+        raise HTTPException(409, "Only finished or failed submissions can be retried.")
+    background_tasks.add_task(process_submission, submission_id)
+    return {"id": submission_id, "status": "queued"}
+
+
 @app.get("/api/submissions/{submission_id}")
 def get_submission(submission_id: str):
     with connection() as con:

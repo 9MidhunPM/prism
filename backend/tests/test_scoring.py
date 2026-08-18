@@ -6,7 +6,7 @@ import fitz
 from fastapi import BackgroundTasks, HTTPException, UploadFile
 from starlette.datastructures import Headers
 
-from app.main import init_db, create_exam, ExamInput, QuestionInput, CriterionInput, upload_submission
+from app.main import init_db, create_exam, ExamInput, QuestionInput, CriterionInput, start_processing, upload_submission
 
 
 def test_exam_totals_are_deterministic(tmp_path, monkeypatch):
@@ -49,3 +49,9 @@ def test_pdf_upload_creates_a_normalized_record_for_every_page(tmp_path, monkeyp
     assert len(pages) == 2
     assert all(page["width"] and page["height"] for page in pages)
     assert all(__import__("pathlib").Path(page["processed_path"]).exists() for page in pages)
+
+
+def test_process_endpoint_rejects_unknown_submission():
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(start_processing("missing", BackgroundTasks()))
+    assert error.value.status_code == 404
