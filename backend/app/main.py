@@ -124,6 +124,10 @@ class OverrideInput(BaseModel):
     reason: str | None = None
 
 
+class AssistantQuery(BaseModel):
+    question: str = Field(min_length=3, max_length=1000)
+
+
 def exam_detail(exam_id: str) -> dict:
     with connection() as con:
         exam = con.execute("SELECT * FROM exams WHERE id=?", (exam_id,)).fetchone()
@@ -404,3 +408,12 @@ def analytics(exam_id: str):
         bucket = concepts.setdefault(row["concept"], [0, 0, 0, 0])
         bucket[0] += row["marks"]; bucket[1] += row["max_marks"]; bucket[2] += 1; bucket[3] += row["needs_review"]
     return {"concepts": [{"name": key, "mastery": round(value[0] / value[1] * 100), "attempts": value[2], "review_rate": round(value[3] / value[2] * 100)} for key, value in concepts.items()]}
+
+
+@app.post("/api/assistant/query")
+def assistant_query(payload: AssistantQuery):
+    with connection() as con:
+        concepts = [dict(row) for row in con.execute("""SELECT c.concept AS name, ROUND(100.0 * SUM(COALESCE(ev.teacher_marks, ev.ai_marks)) / SUM(c.max_marks)) AS mastery FROM evaluations ev JOIN criteria c ON c.id=ev.criterion_id GROUP BY c.concept ORDER BY mastery""")]
+    if not settings.openai_enabled:
+        return {"answer": "Add OPENAI_API_KEY to enable grounded Luna answers. PRISM has prepared the relevant class concept statistics but will not fabricate an AI response.", "sources": concepts[:3], "ai_enabled": False}
+    return {"answer": "Teacher chat is configured for Luna and will be enabled with the dedicated chat operation in the next processing release.", "sources": concepts[:3], "ai_enabled": True}
