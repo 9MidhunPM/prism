@@ -372,7 +372,7 @@ async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, stu
         for page in pages: db.add(SubmissionPage(submission_id=submission.id, page_number=page["page_number"], original_key=str(path), mime_type=file.content_type, **{key: page[key] for key in ("processed_key", "width", "height", "image_hash")}))
         db.commit(); submission_id = submission.id
     background_tasks.add_task(process_submission, submission_id)
-    return {"id": submission_id, "status": "uploaded"}
+    return {"id": submission_id, "status": "uploaded", "student_name": student_name, "page_count": len(pages)}
 
 
 @app.post("/api/submissions/{submission_id}/process")
