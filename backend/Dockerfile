@@ -7,9 +7,10 @@ COPY alembic.ini .
 COPY alembic ./alembic
 COPY app ./app
 COPY docker-entrypoint.sh /usr/local/bin/prism-api
-RUN chmod 755 /usr/local/bin/prism-api
+RUN chmod 755 /usr/local/bin/prism-api && mkdir -p /app/data/uploads/processed
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 80
+VOLUME ["/app/data/uploads"]
 ENTRYPOINT ["/usr/local/bin/prism-api"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80"]

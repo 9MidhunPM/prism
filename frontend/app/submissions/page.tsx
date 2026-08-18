@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { api } from "@/lib/api";
@@ -16,14 +17,20 @@ type Submission = {
   created_at: string;
 };
 export default function SubmissionsPage() {
+  const searchParams = useSearchParams();
   const [rows, setRows] = useState<Submission[]>([]);
   const [error, setError] = useState("");
+  const filters = new URLSearchParams();
+  for (const key of ["exam_id", "class_id", "student_id"]) {
+    const value = searchParams.get(key);
+    if (value) filters.set(key, value);
+  }
   useEffect(() => {
     api
-      .get<Submission[]>("/api/submissions")
+      .get<Submission[]>(`/api/submissions${filters.size ? `?${filters}` : ""}`)
       .then(setRows)
       .catch(() => setError("Papers could not be loaded."));
-  }, []);
+  }, [searchParams]);
   return (
     <AppShell>
       <section className="mx-auto max-w-6xl">

@@ -36,6 +36,10 @@ export default function ClassPage({
   const [identifier, setIdentifier] = useState("");
   const [error, setError] = useState("");
   const [csv, setCsv] = useState("");
+  const [studentSearch, setStudentSearch] = useState("");
+  const [existingStudents, setExistingStudents] = useState<
+    { id: string; name: string; identifier: string; class_name: string }[]
+  >([]);
   const load = async (id: string) => {
     const [nextData, nextAnalytics] = await Promise.all([
       api.get<ClassData>(`/api/classes/${id}`),
@@ -49,6 +53,28 @@ export default function ClassPage({
       load(id).catch(() => setError("This class could not be loaded.")),
     );
   }, [params]);
+  useEffect(() => {
+    if (studentSearch.trim().length < 2) {
+      setExistingStudents([]);
+      return;
+    }
+    const timer = window.setTimeout(
+      () =>
+        api
+          .get<
+            {
+              id: string;
+              name: string;
+              identifier: string;
+              class_name: string;
+            }[]
+          >(`/api/students?q=${encodeURIComponent(studentSearch)}`)
+          .then(setExistingStudents)
+          .catch(() => setExistingStudents([])),
+      150,
+    );
+    return () => window.clearTimeout(timer);
+  }, [studentSearch]);
   async function addStudent(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!data || !name.trim() || !identifier.trim()) return;
@@ -65,6 +91,23 @@ export default function ClassPage({
         reason instanceof Error
           ? reason.message
           : "Student could not be added.",
+      );
+    }
+  }
+  async function addExisting(studentId: string) {
+    if (!data) return;
+    try {
+      await api.post(`/api/classes/${data.id}/memberships`, {
+        student_id: studentId,
+      });
+      setStudentSearch("");
+      setExistingStudents([]);
+      await load(data.id);
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Student could not be added to this class.",
       );
     }
   }
@@ -188,6 +231,35 @@ export default function ClassPage({
                 Import students
               </button>
             </form>
+            <div className="mt-6 border-t border-[var(--line)] pt-5">
+              <h3 className="font-semibold">Add an existing student</h3>
+              <input
+                value={studentSearch}
+                onChange={(event) => setStudentSearch(event.target.value)}
+                className="input mt-3"
+                placeholder="Search students by name or identifier"
+              />
+              {existingStudents.length > 0 && (
+                <div className="mt-2 overflow-hidden rounded-lg border border-[var(--line)]">
+                  {existingStudents.map((student) => (
+                    <button
+                      key={student.id}
+                      type="button"
+                      onClick={() => void addExisting(student.id)}
+                      className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-[var(--surface-muted)]"
+                    >
+                      <span>
+                        <strong>{student.name}</strong>
+                        <span className="ml-2 text-[var(--ink-muted)]">
+                          {student.identifier} · {student.class_name}
+                        </span>
+                      </span>
+                      <span className="text-[var(--brand)]">Add</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </section>
         </div>
         <section className="mt-7">

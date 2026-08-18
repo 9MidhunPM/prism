@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     bootstrap_token: SecretStr | None = None
 
     database_url: str = "sqlite:///./data/prism.db"
+    upload_root: Path = ROOT / "data" / "uploads"
 
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-5.6-luna"

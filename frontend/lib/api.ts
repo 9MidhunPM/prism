@@ -46,10 +46,17 @@ async function request<T>(
   try {
     const headers = new Headers(init?.headers);
     if (init?.method && !["GET", "HEAD", "OPTIONS"].includes(init.method)) {
-      const csrf = document.cookie.split("; ").find((cookie) => cookie.startsWith("prism_csrf="))?.split("=", 2)[1];
+      const csrf = document.cookie
+        .split("; ")
+        .find((cookie) => cookie.startsWith("prism_csrf="))
+        ?.split("=", 2)[1];
       if (csrf) headers.set("X-CSRF-Token", decodeURIComponent(csrf));
     }
-    const response = await fetch(path, { ...init, headers, credentials: "include" });
+    const response = await fetch(path, {
+      ...init,
+      headers,
+      credentials: "include",
+    });
     if (response.ok) {
       if (response.status === 204) return undefined as T;
       return (await response.json()) as T;
@@ -84,5 +91,6 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  delete: <T>(path: `/api/${string}`) => request<T>(path, { method: "DELETE" }),
   request,
 };

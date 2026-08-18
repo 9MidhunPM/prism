@@ -187,16 +187,14 @@ export default function SubmissionPage({
       setSaving(false);
     }
   }
-  async function archive() {
+  async function removePaper() {
     if (
       !window.confirm(
-        "Archive this paper? It will be hidden from normal views but preserved for audit history.",
+        "Delete this paper permanently? Its evaluations, evidence, and review history will be removed.",
       )
     )
       return;
-    await api.patch(`/api/submissions/${submission.id}/archive`, {
-      archived: true,
-    });
+    await api.delete(`/api/submissions/${submission.id}`);
     router.replace("/submissions");
   }
   return (
@@ -205,10 +203,10 @@ export default function SubmissionPage({
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={() => void archive()}
+            onClick={() => void removePaper()}
             className="button-quiet"
           >
-            Archive
+            Delete paper
           </button>
           <Link
             href={`/exams/${submission.exam_id}`}
@@ -219,7 +217,7 @@ export default function SubmissionPage({
         </div>
       }
     >
-      <div className="mx-auto max-w-7xl">
+      <div className="mx-auto max-w-[100rem]">
         <div className="mb-6 flex flex-col justify-between gap-3 border-b border-[var(--line)] pb-6 sm:flex-row sm:items-end">
           <div>
             <h1 className="font-serif text-4xl font-semibold tracking-[-0.035em]">
@@ -239,7 +237,7 @@ export default function SubmissionPage({
               : "Evidence review"}
           </span>
         </div>
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(21rem,.8fr)]">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(24rem,.75fr)]">
           <section className="surface overflow-hidden">
             <div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4">
               <div>
@@ -377,14 +375,16 @@ export default function SubmissionPage({
                   </div>
                   <span
                     className={
-                      selected.needs_review
+                      selected.needs_review && !selected.review_resolved
                         ? "status-pill status-review"
                         : "status-pill status-success"
                     }
                   >
-                    {selected.needs_review
+                    {selected.needs_review && !selected.review_resolved
                       ? "Review recommended"
-                      : "High confidence"}
+                      : selected.review_resolved
+                        ? "Teacher reviewed"
+                        : "High confidence"}
                   </span>
                 </div>
                 <p className="mt-2 text-xs text-[var(--ink-muted)]">
@@ -478,14 +478,14 @@ export default function SubmissionPage({
                       disabled={saving}
                       className="button-secondary shrink-0"
                     >
-                      Ask Luna
+                      Ask PRISM
                     </button>
                   </div>
                 </form>
                 {proposal && (
                   <section className="mt-4 rounded-lg bg-[var(--review-soft)] p-4">
                     <p className="text-sm">
-                      Luna suggests{" "}
+                      PRISM suggests{" "}
                       <strong>
                         {proposal.suggested_marks}/{selected.max_marks}
                       </strong>

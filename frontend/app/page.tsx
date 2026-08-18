@@ -107,9 +107,9 @@ export default function Home() {
             note="in the current cohort"
           />
           <Metric
-            label="Live model"
-            value="Luna"
-            note="structured evaluation"
+            label="PRISM review"
+            value="Active"
+            note="evidence-backed evaluation"
           />
         </div>
         <div className="grid gap-6 xl:grid-cols-[minmax(18rem,.85fr)_minmax(0,1.15fr)]">
@@ -251,12 +251,16 @@ function ReviewPanel({
             <div className="mt-3 flex items-center justify-between">
               <span
                 className={
-                  item.needs_review
+                  item.needs_review && !item.review_resolved
                     ? "status-pill status-review"
                     : "status-pill status-success"
                 }
               >
-                {item.needs_review ? "Review recommended" : "High confidence"}
+                {item.needs_review && !item.review_resolved
+                  ? "Review recommended"
+                  : item.review_resolved
+                    ? "Teacher reviewed"
+                    : "High confidence"}
               </span>
               <button
                 type="button"

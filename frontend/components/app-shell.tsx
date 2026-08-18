@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { AccountControl } from "@/components/account-control";
+import { api } from "@/lib/api";
 
 const items = [
   { href: "/", label: "Workspace", mark: "W" },
   { href: "/classes", label: "Classes", mark: "C" },
   { href: "/exams", label: "Exams", mark: "E" },
   { href: "/submissions", label: "Papers", mark: "P" },
-  { href: "/assistant", label: "Assistant", mark: "A" },
+  { href: "/assistant", label: "PRISM Assistant", mark: "A" },
 ];
 
 function isCurrent(pathname: string, href: string) {
@@ -26,6 +27,23 @@ export function AppShell({
   actions?: ReactNode;
 }) {
   const pathname = usePathname();
+  const [taskCount, setTaskCount] = useState(0);
+  useEffect(() => {
+    let active = true;
+    const load = () =>
+      api
+        .get<{ items: unknown[] }>("/api/processing-jobs")
+        .then((data) => {
+          if (active) setTaskCount(data.items.length);
+        })
+        .catch(() => undefined);
+    void load();
+    const timer = window.setInterval(load, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   return (
     <div className="app-shell">
@@ -41,6 +59,11 @@ export function AppShell({
             PRISM
           </Link>
           <div className="flex items-center gap-2 sm:gap-4">
+            {taskCount > 0 && (
+              <Link href="/submissions" className="status-pill status-neutral">
+                {taskCount} processing
+              </Link>
+            )}
             {actions}
             <AccountControl />
           </div>

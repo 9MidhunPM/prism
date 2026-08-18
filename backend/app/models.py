@@ -60,6 +60,15 @@ class Student(Base):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ClassMembership(Base):
+    __tablename__ = "class_memberships"
+    __table_args__ = (UniqueConstraint("class_id", "student_id", name="uq_class_membership"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    class_id: Mapped[str] = mapped_column(ForeignKey("classes.id"), index=True)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Account(Base):
     __tablename__ = "accounts"
     __table_args__ = (
@@ -185,6 +194,9 @@ class CriterionEvaluation(Base):
     reason: Mapped[str] = mapped_column(Text)
     confidence: Mapped[float] = mapped_column(Float)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    review_resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    review_resolution: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class EvaluationEvidence(Base):

@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { type DragEvent, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
+import { api } from "@/lib/api";
 
 const API = "/api";
 const IMAGE_TYPES = ["image/jpeg", "image/png"];
@@ -31,6 +33,7 @@ export default function ExamPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const router = useRouter();
   const [exam, setExam] = useState<any>(null);
   const [error, setError] = useState("");
   const [studentName, setStudentName] = useState("");
@@ -219,6 +222,17 @@ export default function ExamPage({
     }
   }
 
+  async function removeExam() {
+    if (
+      !window.confirm(
+        "Delete this exam permanently? All submitted papers, evaluations, evidence, and reviews will be removed.",
+      )
+    )
+      return;
+    await api.delete(`/api/exams/${exam.id}`);
+    router.replace("/exams");
+  }
+
   if (error)
     return (
       <main className="min-h-screen bg-[#e8edf0] p-6 text-[#13252c]">
@@ -247,6 +261,13 @@ export default function ExamPage({
     <AppShell
       actions={
         <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => void removeExam()}
+            className="button-quiet"
+          >
+            Delete exam
+          </button>
           <Link
             href={`/exams/${exam.id}/insights`}
             className="button-secondary"
