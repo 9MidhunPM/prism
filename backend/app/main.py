@@ -61,6 +61,9 @@ def init_db() -> None:
         for name, definition in {"processed_path": "TEXT", "width": "INTEGER", "height": "INTEGER", "image_hash": "TEXT"}.items():
             if name not in columns:
                 con.execute(f"ALTER TABLE pages ADD COLUMN {name} {definition}")
+        answer_columns = {row["name"] for row in con.execute("PRAGMA table_info(answers)")}
+        if "page_id" not in answer_columns:
+            con.execute("ALTER TABLE answers ADD COLUMN page_id TEXT")
 
 
 def normalize_pages(original_path: Path, mime_type: str) -> list[dict]:
@@ -201,26 +204,33 @@ async def process_submission(submission_id: str) -> None:
             con.execute("UPDATE submissions SET status='transcribing' WHERE id=?", (submission_id,))
             exam_id = con.execute("SELECT exam_id FROM submissions WHERE id=?", (submission_id,)).fetchone()["exam_id"]
             questions = con.execute("SELECT * FROM questions WHERE exam_id=?", (exam_id,)).fetchall()
-        page = pages[0]
-        perception = await perceive_page(page["processed_path"] or page["original_path"], "image/jpeg" if page["processed_path"] else page["mime_type"], [q["number"] for q in questions])
         with connection() as con:
-            con.execute("INSERT INTO ai_artifacts VALUES (?, ?, 'perception', 'perception_v1', ?, ?, ?)", (str(uuid.uuid4()), submission_id, hashlib.sha256(Path(page["original_path"]).read_bytes()).hexdigest(), perception.model_dump_json(), now()))
-            for answer in perception.answers:
-                match = next((q for q in questions if q["number"] == answer.question_id), None)
-                con.execute("INSERT INTO answers VALUES (?, ?, ?, ?, ?, 'perception_v1')", (str(uuid.uuid4()), submission_id, match["id"] if match else None, answer.transcription, json.dumps(answer.uncertain_segments)))
+            con.execute("DELETE FROM evaluations WHERE submission_id=?", (submission_id,))
+            con.execute("DELETE FROM answers WHERE submission_id=?", (submission_id,))
+        for page in pages:
+            source_path = page["processed_path"] or page["original_path"]
+            source_mime = "image/jpeg" if page["processed_path"] else page["mime_type"]
+            perception = await perceive_page(source_path, source_mime, [q["number"] for q in questions])
+            with connection() as con:
+                con.execute("INSERT INTO ai_artifacts VALUES (?, ?, 'perception', 'perception_v1', ?, ?, ?)", (str(uuid.uuid4()), submission_id, page["image_hash"] or hashlib.sha256(Path(source_path).read_bytes()).hexdigest(), perception.model_dump_json(), now()))
+                for answer in perception.answers:
+                    match = next((q for q in questions if q["number"] == answer.question_id), None)
+                    con.execute("INSERT INTO answers (id, submission_id, question_id, transcription, uncertainty, prompt_version, page_id) VALUES (?, ?, ?, ?, ?, 'perception_v1', ?)", (str(uuid.uuid4()), submission_id, match["id"] if match else None, answer.transcription, json.dumps(answer.uncertain_segments), page["id"]))
             con.execute("UPDATE submissions SET status='grading' WHERE id=?", (submission_id,))
         for question in questions:
-            matching = next((a for a in perception.answers if a.question_id == question["number"]), None)
-            if not matching:
-                continue
             with connection() as con:
+                mapped_answers = con.execute("SELECT a.*, p.processed_path, p.original_path, p.mime_type FROM answers a JOIN pages p ON p.id=a.page_id WHERE a.submission_id=? AND a.question_id=? ORDER BY p.page_number", (submission_id, question["id"])).fetchall()
                 criteria = con.execute("SELECT * FROM criteria WHERE question_id=?", (question["id"],)).fetchall()
+            if not mapped_answers:
+                continue
+            transcription = "\n\n".join(answer["transcription"] for answer in mapped_answers)
+            visual_page = mapped_answers[0]
             for criterion in criteria:
-                result = await grade_criterion(page["processed_path"] or page["original_path"], "image/jpeg" if page["processed_path"] else page["mime_type"], question["text"], dict(criterion), matching.transcription)
+                result = await grade_criterion(visual_page["processed_path"] or visual_page["original_path"], "image/jpeg" if visual_page["processed_path"] else visual_page["mime_type"], question["text"], dict(criterion), transcription)
                 marks = min(criterion["max_marks"], max(0, result.awarded_marks))
-                evidence = [{"page": page["page_number"], "quote": quote} for quote in result.evidence_quotes]
+                evidence = [{"page": index + 1, "quote": quote} for index, quote in enumerate(result.evidence_quotes)]
                 with connection() as con:
-                    con.execute("INSERT INTO evaluations VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)", (str(uuid.uuid4()), submission_id, criterion["id"], marks, result.reason, json.dumps(evidence), result.confidence, int(result.needs_review or result.confidence < REVIEW_THRESHOLD or bool(matching.uncertain_segments))))
+                    con.execute("INSERT INTO evaluations VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)", (str(uuid.uuid4()), submission_id, criterion["id"], marks, result.reason, json.dumps(evidence), result.confidence, int(result.needs_review or result.confidence < REVIEW_THRESHOLD or any(json.loads(answer["uncertainty"]) for answer in mapped_answers))))
         with connection() as con:
             needs_review = con.execute("SELECT 1 FROM evaluations WHERE submission_id=? AND needs_review=1", (submission_id,)).fetchone()
             con.execute("UPDATE submissions SET status=? WHERE id=?", ("review_required" if needs_review else "completed", submission_id))
