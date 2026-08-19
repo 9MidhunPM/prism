@@ -23,6 +23,7 @@ declare global {
 const clientId = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_CLIENT_ID;
 const apiKey = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_API_KEY;
 const appId = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_APP_ID;
+const driveScope = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_SCOPE ?? "https://www.googleapis.com/auth/drive.readonly";
 
 function loadScript(src: string) {
   return new Promise<void>((resolve, reject) => {
@@ -95,7 +96,7 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
       const accessToken = await new Promise<string>((resolve, reject) => {
         const tokenClient = window.google.accounts.oauth2.initTokenClient({
           client_id: clientId,
-          scope: "https://www.googleapis.com/auth/drive.file",
+          scope: driveScope,
           callback: (response: any) => response.error ? reject(new Error("Google Drive authorization was not granted.")) : resolve(response.access_token),
         });
         tokenClient.requestAccessToken({ prompt: "consent" });

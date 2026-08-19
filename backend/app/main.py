@@ -1148,12 +1148,37 @@ async def drive_children(access_token: str, parent_id: str, folders_only: bool =
     if folders_only:
         query += " and mimeType = 'application/vnd.google-apps.folder'"
     headers = {"Authorization": f"Bearer {access_token}"}
+    files: list[dict] = []
+    page_token: str | None = None
     async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.get("https://www.googleapis.com/drive/v3/files", headers=headers, params={"q": query, "fields": "files(id,name,mimeType,size,md5Checksum)", "pageSize": 100, "supportsAllDrives": "true", "includeItemsFromAllDrives": "true"})
-    if response.status_code in {401, 403}:
-        raise HTTPException(403, "Google Drive authorization expired or does not allow this folder.")
-    response.raise_for_status()
-    return response.json().get("files", [])
+        for _ in range(10):
+            response = await client.get("https://www.googleapis.com/drive/v3/files", headers=headers, params={"q": query, "fields": "nextPageToken,files(id,name,mimeType,size,md5Checksum)", "pageSize": 100, "pageToken": page_token, "supportsAllDrives": "true", "includeItemsFromAllDrives": "true"})
+            if response.status_code in {401, 403}:
+                raise HTTPException(403, "Google Drive authorization expired or does not allow this folder.")
+            response.raise_for_status()
+            body = response.json()
+            files.extend(body.get("files", []))
+            page_token = body.get("nextPageToken")
+            if not page_token:
+                break
+    return files
+
+
+async def drive_descendant_files(access_token: str, folder_id: str, depth: int = 0, visited: set[str] | None = None) -> list[dict]:
+    """Walk a student folder so page files can be organized in nested Drive folders."""
+    if depth > 6:
+        return []
+    visited = visited or set()
+    if folder_id in visited or len(visited) >= 500:
+        return []
+    visited.add(folder_id)
+    files: list[dict] = []
+    for child in await drive_children(access_token, folder_id):
+        if child.get("mimeType") == "application/vnd.google-apps.folder":
+            files.extend(await drive_descendant_files(access_token, child["id"], depth + 1, visited))
+        elif child.get("mimeType") in {"image/jpeg", "image/png"}:
+            files.append(child)
+    return files
 
 
 def drive_page_order(name: str) -> tuple[int, str]:
@@ -1174,8 +1199,8 @@ async def preview_drive_import(exam_id: str, payload: DrivePreviewInput, teacher
         raise HTTPException(422, "The selected Drive folder has no student folders.")
     items = []
     for folder in folders[:200]:
-        files = await drive_children(payload.access_token, folder["id"])
-        pages = [file for file in files if file.get("mimeType") in {"image/jpeg", "image/png"} and Path(file.get("name", "")).stem.isdigit()]
+        files = await drive_descendant_files(payload.access_token, folder["id"])
+        pages = [file for file in files if Path(file.get("name", "")).stem.isdigit()]
         pages.sort(key=lambda file: drive_page_order(file["name"]))
         student = by_name.get(" ".join(folder["name"].casefold().split()))
         status = "matched" if student else "unresolved"

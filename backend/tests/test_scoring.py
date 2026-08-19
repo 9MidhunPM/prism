@@ -6,7 +6,7 @@ import fitz
 from fastapi import BackgroundTasks, HTTPException, UploadFile
 from starlette.datastructures import Headers
 
-from app.main import complete_review, create_exam, delete_exam, page_source, perception_input_hash, question_material, recalculate_submission_state, resolve_question, ExamInput, QuestionInput, CriterionInput, start_processing, upload_submission
+from app.main import complete_review, create_exam, delete_exam, drive_page_order, page_source, perception_input_hash, question_material, recalculate_submission_state, resolve_question, ExamInput, QuestionInput, CriterionInput, start_processing, upload_submission
 from app.models import (AIArtifact, Answer, ClassCohort, CriterionEvaluation,
                         EvaluationEvidence, EvidenceRegion, Exam, ProcessingJob,
                         Question, ReviewSuggestion, RubricCriterion, Student,
@@ -37,6 +37,10 @@ def test_optional_answer_key_is_preserved_without_affecting_marks(isolated_datab
     exam = create_exam(ExamInput(title="T", subject="S", questions=[QuestionInput(number="Q1", text="Question", answer_key="A correct explanation", criteria=[CriterionInput(title="C", description="D", max_marks=2, concept="X")])]), teacher)
     assert exam["total_marks"] == 2
     assert exam["questions"][0]["answer_key"] == "A correct explanation"
+
+
+def test_drive_pages_use_natural_numeric_order(isolated_database):
+    assert sorted(["10.jpeg", "2.jpeg", "1.jpeg"], key=drive_page_order) == ["1.jpeg", "2.jpeg", "10.jpeg"]
 
 
 def test_upload_rejects_unsupported_file_type(isolated_database):
