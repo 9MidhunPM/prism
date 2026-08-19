@@ -71,6 +71,7 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const pickerRef = useRef<any>(null);
+  const pickerTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!open || !clientId) return;
@@ -103,6 +104,7 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
       const view = new window.google.picker.DocsView()
         .setIncludeFolders(true)
         .setSelectFolderEnabled(true);
+      let pickerLoaded = false;
       const picker = new window.google.picker.PickerBuilder()
         .setDeveloperKey(apiKey)
         .setAppId(appId)
@@ -112,26 +114,40 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
         .addView(view)
         .setCallback((data: any) => {
           const action = data.action ?? data[window.google.picker.Response.ACTION];
-          if (action === window.google.picker.Action.PICKED) {
+          if (action === window.google.picker.Action.LOADED) {
+            pickerLoaded = true;
+            if (pickerTimeoutRef.current !== null) window.clearTimeout(pickerTimeoutRef.current);
+          } else if (action === window.google.picker.Action.PICKED) {
             const folder = data.docs?.[0];
             const folderId = folder?.id ?? folder?.[window.google.picker.Document.ID];
             picker.setVisible(false);
             pickerRef.current = null;
+            if (pickerTimeoutRef.current !== null) window.clearTimeout(pickerTimeoutRef.current);
             if (folderId) void preview(folderId, accessToken);
           } else if (action === window.google.picker.Action.CANCEL || action === window.google.picker.Action.ERROR) {
             picker.setVisible(false);
             pickerRef.current = null;
+            if (pickerTimeoutRef.current !== null) window.clearTimeout(pickerTimeoutRef.current);
             setStatus("");
-            if (action === window.google.picker.Action.ERROR) setError("Google Drive could not open the folder picker. Check the Picker API key and project number.");
+            if (action === window.google.picker.Action.ERROR) setError("Google Drive could not open the folder picker. Check that the browser API key is valid, belongs to the same Google Cloud project, and has the Picker API enabled.");
           }
         })
         .build();
       pickerRef.current = picker;
       picker.setVisible(true);
+      pickerTimeoutRef.current = window.setTimeout(() => {
+        if (!pickerLoaded && pickerRef.current === picker) {
+          picker.setVisible(false);
+          pickerRef.current = null;
+          setStatus("");
+          setError("Google Drive Picker did not load. The browser API key may be invalid, restricted to the wrong origin, or missing the Google Picker API.");
+        }
+      }, 12000);
       setStatus("");
     } catch (reason) {
       pickerRef.current?.setVisible(false);
       pickerRef.current = null;
+      if (pickerTimeoutRef.current !== null) window.clearTimeout(pickerTimeoutRef.current);
       setStatus("");
       setError(reason instanceof Error ? reason.message : "Google Drive could not be opened.");
     }
@@ -140,6 +156,7 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
   function closeImportPanel() {
     pickerRef.current?.setVisible(false);
     pickerRef.current = null;
+    if (pickerTimeoutRef.current !== null) window.clearTimeout(pickerTimeoutRef.current);
     setOpen(false);
     setStatus("");
     setError("");
