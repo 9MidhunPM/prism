@@ -45,20 +45,25 @@ export default function StudentPortal() {
   const [newPassword, setNewPassword] = useState("");
 
   useEffect(() => {
+    if (!account || account.must_change_password) return;
+    let cancelled = false;
+    setError("");
     Promise.all([
       api.get<Profile>("/api/student/profile"),
       api.get<Submission[]>("/api/student/submissions"),
     ])
       .then(([nextProfile, nextSubmissions]) => {
+        if (cancelled) return;
         setProfile(nextProfile);
         setSubmissions(nextSubmissions);
       })
-      .catch(() =>
-        setError(
-          "Sign in with your student account to view your assessment results.",
-        ),
-      );
-  }, []);
+      .catch(() => {
+        if (!cancelled) setError("Your assessment results could not be loaded. Please try again.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [account?.id, account?.must_change_password]);
   async function changePassword(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
@@ -101,7 +106,7 @@ export default function StudentPortal() {
           <>
             <div className="mb-8 border-b border-[var(--line)] pb-7">
               <h1 className="font-serif text-4xl font-semibold tracking-[-0.035em]">
-                {profile?.student.name ?? "Loading your results..."}
+                {profile?.student.name ?? account?.name ?? "Loading your results..."}
               </h1>
               <p className="mt-3 text-sm leading-6 text-[var(--ink-muted)]">
                 Grades are shown for review. Your teacher remains responsible
