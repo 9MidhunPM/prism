@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type DragEvent, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
+import { DriveImportPanel } from "@/components/drive-import-panel";
 import { api, csrfHeaders } from "@/lib/api";
 
 const API = "/api";
@@ -570,6 +571,7 @@ export default function ExamPage({
               </section>
             )}
           </section>
+          <DriveImportPanel examId={exam.id} roster={roster} />
           <aside className="lg:pt-1">
             <h2 className="text-lg font-semibold">Marking plan</h2>
             <p className="mt-1 text-sm text-[var(--ink-muted)]">
