@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 
-type RosterStudent = { id: string; name: string; identifier: string };
+type RosterStudent = { id: string; name: string; identifier: string; class_name?: string };
 type DriveItem = {
   folder_id: string;
   folder_name: string;
@@ -67,6 +67,7 @@ function loadPickerApi() {
 
 export function DriveImportPanel({ examId, roster }: { examId: string; roster: RosterStudent[] }) {
   const [open, setOpen] = useState(false);
+  const [allStudents, setAllStudents] = useState<RosterStudent[]>([]);
   const [token, setToken] = useState("");
   const [batchId, setBatchId] = useState("");
   const [items, setItems] = useState<DriveItem[]>([]);
@@ -80,6 +81,13 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
   useEffect(() => {
     if (!open || !clientId) return;
     void loadScript("https://accounts.google.com/gsi/client").catch((reason) => setError(reason instanceof Error ? reason.message : "Google Drive could not be loaded."));
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    void api.get<RosterStudent[]>("/api/students?limit=0")
+      .then(setAllStudents)
+      .catch(() => setError("Existing students could not be loaded. You can still create a new student."));
   }, [open]);
 
   async function chooseFolder(mode: "main" | "student") {
@@ -212,6 +220,8 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
     return Boolean(assignment) && (assignment === SKIP_STUDENT || (item.pages.length > 0 && (assignment !== NEW_STUDENT || (newStudentNames[item.folder_id] ?? item.folder_name).trim().length >= 2)));
   }
 
+  const studentOptions = Array.from(new Map([...roster, ...allStudents].map((student) => [student.id, student])).values()).sort((left, right) => left.name.localeCompare(right.name));
+
   return (
     <section className="surface-lined mt-5 p-5">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
@@ -238,7 +248,7 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
                <div className="flex w-full flex-col gap-2 sm:max-w-xs">
                  <select aria-label={`Assign ${item.folder_name}`} value={assignments[item.folder_id] ?? ""} onChange={(event) => setAssignments((current) => ({ ...current, [item.folder_id]: event.target.value }))} className="input">
                  <option value="">Choose student</option>
-                 {roster.map((student) => <option key={student.id} value={student.id}>{student.name} ({student.identifier})</option>)}
+                 {studentOptions.map((student) => <option key={student.id} value={student.id}>{student.name} ({student.identifier}){student.class_name ? ` · ${student.class_name}` : ""}</option>)}
                  <option value={NEW_STUDENT}>New student</option>
                  <option value={SKIP_STUDENT}>Skip this folder</option>
                  </select>

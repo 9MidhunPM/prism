@@ -936,13 +936,16 @@ def create_student(class_id: str, payload: StudentInput, teacher: dict = Depends
 
 
 @app.get("/api/students")
-def get_students(q: str = "", teacher: dict = Depends(current_teacher)):
+def get_students(q: str = "", limit: int = 20, teacher: dict = Depends(current_teacher)):
     with session() as db:
         statement = select(Student, ClassCohort).join(ClassCohort).where(ClassCohort.teacher_id == teacher["id"], Student.archived_at.is_(None), ClassCohort.archived_at.is_(None))
         if q.strip():
             like = f"%{q.strip()}%"
             statement = statement.where((Student.name.ilike(like)) | (Student.identifier.ilike(like)))
-        rows = db.execute(statement.order_by(Student.name).limit(20)).all()
+        statement = statement.order_by(Student.name)
+        if limit > 0:
+            statement = statement.limit(min(limit, 1000))
+        rows = db.execute(statement).all()
         accounts = {account.student_id: account for account in db.scalars(select(Account).where(Account.student_id.in_([student.id for student, _ in rows] or ["-"]))).all()}
         return [{"id": student.id, "name": student.name, "identifier": student.identifier, "class_id": cohort.id, "class_name": cohort.name, "account": {"email": accounts[student.id].email, "disabled": bool(accounts[student.id].disabled_at)} if student.id in accounts else None} for student, cohort in rows]
 
@@ -1205,7 +1208,7 @@ async def preview_drive_import(exam_id: str, payload: DrivePreviewInput, teacher
         raise HTTPException(503, "Google Drive import is not configured.")
     with session() as db:
         exam = active_owned_exam(db, exam_id, teacher["id"])
-        students = db.scalars(select(Student).where(Student.class_id == exam.class_id, Student.archived_at.is_(None))) if exam.class_id else []
+        students = db.scalars(select(Student).join(ClassCohort).where(ClassCohort.teacher_id == teacher["id"], ClassCohort.archived_at.is_(None), Student.archived_at.is_(None))).all()
         by_name = {" ".join(student.name.casefold().split()): student for student in students}
     if payload.folder_mode == "student":
         selected_folder = await drive_metadata(payload.access_token, payload.root_folder_id)
@@ -1385,8 +1388,6 @@ async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, stu
             student = db.scalar(select(Student).join(ClassCohort).where(Student.id == student_id, ClassCohort.teacher_id == teacher["id"], Student.archived_at.is_(None)))
             if not student:
                 raise HTTPException(404, "Student not found in your active roster.")
-            if exam.class_id and student.class_id != exam.class_id:
-                raise HTTPException(422, "Choose a student from the exam class.")
         else:
             if not student_name.strip():
                 raise HTTPException(422, "Choose a roster student or provide a student name.")
