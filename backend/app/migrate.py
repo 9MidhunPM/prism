@@ -22,6 +22,10 @@ def main() -> None:
         try:
             config.attributes["connection"] = connection
             command.upgrade(config, "head")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
         finally:
             if is_postgres:
                 connection.execute(text("SELECT pg_advisory_unlock(hashtext('prism_schema_migration'))"))
