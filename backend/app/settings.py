@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     job_poll_interval_seconds: int = Field(default=2, ge=1, le=60)
     job_max_attempts: int = Field(default=3, ge=1, le=10)
     job_stale_after_seconds: int = Field(default=600, ge=60, le=3600)
+    rate_limit_per_minute: int = Field(default=120, ge=10, le=1000)
+    login_rate_limit_per_minute: int = Field(default=10, ge=3, le=100)
+    google_drive_client_id: str | None = None
 
     @field_validator("cors_origins")
     @classmethod
@@ -80,6 +83,10 @@ class Settings(BaseSettings):
     def openai_enabled(self) -> bool:
         return self.openai_api_key is not None and bool(self.openai_api_key.get_secret_value())
 
+    @property
+    def google_drive_enabled(self) -> bool:
+        return bool(self.google_drive_client_id)
+
     def validate_production(self) -> None:
         if self.app_env != "production":
             return
@@ -91,6 +98,10 @@ class Settings(BaseSettings):
             raise ValueError("SESSION_COOKIE_SECURE must be true in production")
         if not self.database_url.startswith("postgresql+"):
             raise ValueError("DATABASE_URL must use PostgreSQL in production")
+        if self.demo_mode:
+            raise ValueError("DEMO_MODE must be false in production")
+        if any(not origin.startswith("https://") or "localhost" in origin for origin in self.cors_origin_list):
+            raise ValueError("CORS_ORIGINS must contain only HTTPS production origins")
         if self.enable_http_bootstrap and (not self.bootstrap_token or len(self.bootstrap_token.get_secret_value()) < 32):
             raise ValueError("BOOTSTRAP_TOKEN must be set when HTTP bootstrap is enabled")
 

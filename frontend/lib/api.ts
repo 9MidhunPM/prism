@@ -39,6 +39,14 @@ function toApiErrorStatus(status: number): ApiErrorStatus {
   }
 }
 
+export function csrfHeaders(): Record<string, string> {
+  const csrf = document.cookie
+    .split("; ")
+    .find((cookie) => cookie.startsWith("prism_csrf="))
+    ?.split("=", 2)[1];
+  return csrf ? { "X-CSRF-Token": decodeURIComponent(csrf) } : {};
+}
+
 async function request<T>(
   path: `/api/${string}`,
   init?: RequestInit,
@@ -46,11 +54,8 @@ async function request<T>(
   try {
     const headers = new Headers(init?.headers);
     if (init?.method && !["GET", "HEAD", "OPTIONS"].includes(init.method)) {
-      const csrf = document.cookie
-        .split("; ")
-        .find((cookie) => cookie.startsWith("prism_csrf="))
-        ?.split("=", 2)[1];
-      if (csrf) headers.set("X-CSRF-Token", decodeURIComponent(csrf));
+      for (const [name, value] of Object.entries(csrfHeaders()))
+        headers.set(name, value);
     }
     const response = await fetch(path, {
       ...init,

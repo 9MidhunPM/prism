@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type DragEvent, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
-import { api } from "@/lib/api";
+import { api, csrfHeaders } from "@/lib/api";
 
 const API = "/api";
 const IMAGE_TYPES = ["image/jpeg", "image/png"];
@@ -201,6 +201,7 @@ export default function ExamPage({
       const response = await fetch(`${API}/exams/${exam.id}/submissions`, {
         method: "POST",
         credentials: "include",
+        headers: csrfHeaders(),
         body: form,
       });
       const body = await response.json().catch(() => null);

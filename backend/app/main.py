@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import io
 import json
+import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -10,11 +13,13 @@ from pathlib import Path
 from typing import Literal
 
 import fitz
+import httpx
 from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from PIL import Image, ImageDraw, ImageOps
 from pydantic import BaseModel, Field
+from starlette.datastructures import Headers
 from sqlalchemy import func, select, text
 
 from . import database
@@ -24,8 +29,8 @@ from .ai import (EXAM_IMPORT_VERSION, PERCEPTION_VERSION, PerceptionResult,
 from .auth import hash_password, random_token, token_hash, verify_password
 from .demo import seed_demo_accounts
 from .models import (AIArtifact, Account, AccountRole, Answer, AuthSession, ClassCohort, ClassMembership, CriterionEvaluation, EvaluationEvidence, Exam,
-                     EvidenceRegion, ProcessingJob, Question, ReviewSuggestion, RubricCriterion, Student, Submission,
-                     SubmissionPage, SubmissionStatus, Teacher, TeacherOverride)
+                      EvidenceRegion, ProcessingJob, Question, ReviewSuggestion, RubricCriterion, Student, Submission,
+                      SubmissionPage, SubmissionStatus, Teacher, TeacherOverride, DriveImportBatch, DriveImportItem)
 from .settings import get_settings
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,10 +47,25 @@ ACTIVE_PROCESSING_STAGES = {
     SubmissionStatus.STRUCTURED,
     SubmissionStatus.GRADING,
 }
+UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+CSRF_EXEMPT_PATHS = {"/api/auth/login", "/api/auth/bootstrap", "/api/health", "/api/health/ready"}
+TEMP_PASSWORD_ALLOWED_PATHS = {"/api/auth/me", "/api/auth/change-password", "/api/auth/logout"}
+rate_limit_lock = threading.Lock()
+rate_limit_windows: dict[str, list[float]] = {}
 
 
 def init_storage() -> None:
     UPLOADS.mkdir(parents=True, exist_ok=True)
+
+
+def validate_upload_bytes(contents: bytes, mime_type: str) -> None:
+    signatures = {
+        "image/jpeg": b"\xff\xd8\xff",
+        "image/png": b"\x89PNG\r\n\x1a\n",
+        "application/pdf": b"%PDF-",
+    }
+    if not contents.startswith(signatures[mime_type]):
+        raise HTTPException(422, "The file content does not match its declared type.")
 
 
 def session():
@@ -227,6 +247,16 @@ class PasswordChangeInput(BaseModel):
 
 class ReleaseInput(BaseModel):
     released: bool
+
+
+class DrivePreviewInput(BaseModel):
+    root_folder_id: str = Field(min_length=3, max_length=255)
+    access_token: str = Field(min_length=20, max_length=4096)
+
+
+class DriveCommitInput(BaseModel):
+    access_token: str = Field(min_length=20, max_length=4096)
+    assignments: dict[str, str] = {}
 
 
 def imported_draft(result) -> dict:
@@ -657,19 +687,48 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list, allow_origin_regex=r"http://localhost:\d+", allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
+app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list, allow_origin_regex=r"http://localhost:\d+" if settings.app_env != "production" else None, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"], allow_headers=["Content-Type", "X-CSRF-Token"], allow_credentials=True)
 
 
 @app.middleware("http")
 async def csrf_protection(request: Request, call_next):
-    if request.method in {"GET", "HEAD", "OPTIONS"} or request.url.path in {"/api/auth/login", "/api/auth/bootstrap", "/api/health", "/api/health/ready"}:
-        return await call_next(request)
-    origin = request.headers.get("origin")
-    if origin and origin not in settings.cors_origin_list:
-        return Response(status_code=403, content='{"detail":"Untrusted request origin."}', media_type="application/json")
-    if request.headers.get("sec-fetch-site") == "cross-site":
-        return Response(status_code=403, content='{"detail":"Cross-site requests are not allowed."}', media_type="application/json")
-    return await call_next(request)
+    client = request.client.host if request.client else "unknown"
+    limit = settings.login_rate_limit_per_minute if request.url.path == "/api/auth/login" else settings.rate_limit_per_minute
+    now = time.monotonic()
+    key = f"{client}:{request.url.path if request.url.path == '/api/auth/login' else 'api'}"
+    with rate_limit_lock:
+        window = [item for item in rate_limit_windows.get(key, []) if item > now - 60]
+        if len(window) >= limit:
+            return Response(status_code=429, content='{"detail":"Too many requests. Try again shortly."}', media_type="application/json", headers={"Retry-After": "60"})
+        window.append(now)
+        rate_limit_windows[key] = window
+    if request.method in UNSAFE_METHODS and request.url.path not in CSRF_EXEMPT_PATHS:
+        origin = request.headers.get("origin")
+        if origin and origin not in settings.cors_origin_list:
+            return Response(status_code=403, content='{"detail":"Untrusted request origin."}', media_type="application/json")
+        if request.headers.get("sec-fetch-site") == "cross-site":
+            return Response(status_code=403, content='{"detail":"Cross-site requests are not allowed."}', media_type="application/json")
+        token = request.cookies.get("prism_session")
+        csrf_token = request.headers.get("X-CSRF-Token")
+        with session() as db:
+            active_session = db.scalar(select(AuthSession).where(AuthSession.token_hash == token_hash(token or ""), AuthSession.revoked_at.is_(None), AuthSession.expires_at > datetime.now(timezone.utc)))
+            if not active_session or not csrf_token or not hmac.compare_digest(active_session.csrf_hash, token_hash(csrf_token)):
+                return Response(status_code=403, content='{"detail":"Invalid CSRF token."}', media_type="application/json")
+    token = request.cookies.get("prism_session")
+    if token and request.url.path not in TEMP_PASSWORD_ALLOWED_PATHS:
+        with session() as db:
+            active_session = db.scalar(select(AuthSession).where(AuthSession.token_hash == token_hash(token), AuthSession.revoked_at.is_(None), AuthSession.expires_at > datetime.now(timezone.utc)))
+            account = db.get(Account, active_session.account_id) if active_session else None
+            if account and account.role == AccountRole.STUDENT and account.must_change_password:
+                return Response(status_code=403, content='{"detail":"Change your temporary password before accessing student records."}', media_type="application/json")
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.path.startswith("/api/") and request.cookies.get("prism_session"):
+        response.headers.setdefault("Cache-Control", "private, no-store")
+    return response
 
 
 @app.get("/api/health")
@@ -925,14 +984,17 @@ def set_student_account_status(student_id: str, disabled: bool, teacher: dict = 
 
 
 @app.post("/api/auth/change-password", status_code=204)
-def change_password(payload: PasswordChangeInput, account: dict = Depends(current_account)):
+def change_password(payload: PasswordChangeInput, response: Response, account: dict = Depends(current_account)):
     with session() as db:
         persisted = db.get(Account, account["id"])
         if not persisted or not verify_password(payload.current_password, persisted.password_hash):
             raise HTTPException(401, "Current password is incorrect.")
         persisted.password_hash = hash_password(payload.new_password)
         persisted.must_change_password = False
+        for active_session in db.scalars(select(AuthSession).where(AuthSession.account_id == persisted.id, AuthSession.revoked_at.is_(None))):
+            active_session.revoked_at = datetime.now(timezone.utc)
         db.commit()
+    set_session(response, persisted)
 
 
 @app.post("/api/classes/{class_id}/memberships", status_code=201)
@@ -1015,6 +1077,7 @@ async def import_exam_draft(file: UploadFile = File(...), teacher: dict = Depend
         raise HTTPException(400, "The uploaded question paper is empty.")
     if len(contents) > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(413, f"Files must be smaller than {settings.max_upload_mb} MB.")
+    validate_upload_bytes(contents, file.content_type)
     extension = {"image/jpeg": ".jpg", "image/png": ".png", "application/pdf": ".pdf"}[file.content_type]
     path = UPLOADS / f"exam-draft-{uuid.uuid4()}{extension}"
     path.write_bytes(contents)
@@ -1059,6 +1122,7 @@ async def import_answer_key(file: UploadFile = File(...), question_numbers: str 
         raise HTTPException(400, "The answer key is empty.")
     if len(contents) > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(413, f"Files must be smaller than {settings.max_upload_mb} MB.")
+    validate_upload_bytes(contents, file.content_type)
     extension = {"image/jpeg": ".jpg", "image/png": ".png", "application/pdf": ".pdf"}[file.content_type]
     path = UPLOADS / f"answer-key-{uuid.uuid4()}{extension}"
     path.write_bytes(contents)
@@ -1077,6 +1141,99 @@ async def import_answer_key(file: UploadFile = File(...), question_numbers: str 
             continue
         answers.append({**answer.model_dump(), "question_number": matched})
     return {"answers": answers, "warnings": list(dict.fromkeys(warnings))}
+
+
+async def drive_children(access_token: str, parent_id: str, folders_only: bool = False) -> list[dict]:
+    query = f"'{parent_id}' in parents and trashed = false"
+    if folders_only:
+        query += " and mimeType = 'application/vnd.google-apps.folder'"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get("https://www.googleapis.com/drive/v3/files", headers=headers, params={"q": query, "fields": "files(id,name,mimeType,size,md5Checksum)", "pageSize": 100, "supportsAllDrives": "true", "includeItemsFromAllDrives": "true"})
+    if response.status_code in {401, 403}:
+        raise HTTPException(403, "Google Drive authorization expired or does not allow this folder.")
+    response.raise_for_status()
+    return response.json().get("files", [])
+
+
+def drive_page_order(name: str) -> tuple[int, str]:
+    stem = Path(name).stem
+    return (int(stem) if stem.isdigit() else 10**9, name.casefold())
+
+
+@app.post("/api/exams/{exam_id}/imports/drive/preview", status_code=201)
+async def preview_drive_import(exam_id: str, payload: DrivePreviewInput, teacher: dict = Depends(current_teacher)):
+    if not settings.google_drive_enabled:
+        raise HTTPException(503, "Google Drive import is not configured.")
+    with session() as db:
+        exam = active_owned_exam(db, exam_id, teacher["id"])
+        students = db.scalars(select(Student).where(Student.class_id == exam.class_id, Student.archived_at.is_(None))) if exam.class_id else []
+        by_name = {" ".join(student.name.casefold().split()): student for student in students}
+    folders = await drive_children(payload.access_token, payload.root_folder_id, folders_only=True)
+    if not folders:
+        raise HTTPException(422, "The selected Drive folder has no student folders.")
+    items = []
+    for folder in folders[:200]:
+        files = await drive_children(payload.access_token, folder["id"])
+        pages = [file for file in files if file.get("mimeType") in {"image/jpeg", "image/png"} and Path(file.get("name", "")).stem.isdigit()]
+        pages.sort(key=lambda file: drive_page_order(file["name"]))
+        student = by_name.get(" ".join(folder["name"].casefold().split()))
+        status = "matched" if student else "unresolved"
+        warning = None if pages else "No numbered JPEG or PNG pages were found."
+        items.append({"folder_id": folder["id"], "folder_name": folder["name"], "student_id": student.id if student else None, "pages": [{"file_id": page["id"], "name": page["name"], "mime_type": page["mimeType"], "checksum": page.get("md5Checksum")} for page in pages], "status": status, "error": warning})
+    with session() as db:
+        batch = DriveImportBatch(teacher_id=teacher["id"], exam_id=exam_id, root_folder_id=payload.root_folder_id)
+        db.add(batch); db.flush()
+        for item in items:
+            db.add(DriveImportItem(batch_id=batch.id, **item))
+        db.commit()
+        batch_id = batch.id
+    return {"id": batch_id, "state": "previewed", "items": items}
+
+
+@app.post("/api/imports/{batch_id}/commit")
+async def commit_drive_import(batch_id: str, payload: DriveCommitInput, background_tasks: BackgroundTasks, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        batch = db.scalar(select(DriveImportBatch).where(DriveImportBatch.id == batch_id, DriveImportBatch.teacher_id == teacher["id"]))
+        if not batch or batch.state != "previewed":
+            raise HTTPException(404, "Drive import preview not found")
+        exam = active_owned_exam(db, batch.exam_id, teacher["id"])
+        items = [{"id": item.id, "folder_id": item.folder_id, "student_id": item.student_id, "pages": item.pages} for item in db.scalars(select(DriveImportItem).where(DriveImportItem.batch_id == batch.id))]
+        batch.state = "importing"
+        db.commit()
+    headers = {"Authorization": f"Bearer {payload.access_token}"}
+    imported = []
+    async with httpx.AsyncClient(timeout=60) as client:
+        for item in items:
+            student_id = payload.assignments.get(item["folder_id"], item["student_id"])
+            if not student_id or not item["pages"] or len(item["pages"]) > settings.max_submission_pages:
+                with session() as db:
+                    stored = db.get(DriveImportItem, item["id"]); stored.status = "skipped"; stored.error = "Assign a student and provide up to the maximum number of pages."; db.commit()
+                continue
+            uploads = []
+            for page in item["pages"]:
+                response = await client.get(f"https://www.googleapis.com/drive/v3/files/{page['file_id']}?alt=media", headers=headers)
+                if response.status_code != 200:
+                    uploads = []; break
+                uploads.append(UploadFile(filename=page["name"], file=io.BytesIO(response.content), headers=Headers({"content-type": page["mime_type"]})))
+            if not uploads:
+                with session() as db:
+                    stored = db.get(DriveImportItem, item["id"]); stored.status = "failed"; stored.error = "A Drive page could not be downloaded."; db.commit()
+                continue
+            try:
+                result = await upload_submission(background_tasks, exam.id, pages=uploads, student_id=student_id, teacher=teacher)
+            except HTTPException as exc:
+                with session() as db:
+                    stored = db.get(DriveImportItem, item["id"]); stored.status = "failed"; stored.error = exc.detail; db.commit()
+                continue
+            with session() as db:
+                stored = db.get(DriveImportItem, item["id"]); stored.student_id = student_id; stored.status = "imported"; stored.error = None; db.commit()
+            imported.append(result)
+    with session() as db:
+        batch = db.get(DriveImportBatch, batch_id)
+        batch.state = "completed"
+        db.commit()
+    return {"id": batch_id, "state": "completed", "imported": imported}
 
 
 @app.get("/api/exams")
@@ -1156,6 +1313,8 @@ async def upload_submission(background_tasks: BackgroundTasks, exam_id: str, stu
         raise HTTPException(400, "An uploaded page is empty.")
     if sum(len(contents) for _, contents in payloads) > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(413, f"All pages together must be smaller than {settings.max_upload_mb} MB.")
+    for upload, contents in payloads:
+        validate_upload_bytes(contents, upload.content_type)
     with session() as db:
         exam = owned_exam(db, exam_id, teacher["id"])
     source_hash = hashlib.sha256(b"".join(hashlib.sha256(contents).digest() for _, contents in payloads)).hexdigest()
@@ -1335,6 +1494,8 @@ def reassign_submission_student(submission_id: str, payload: StudentAssignmentIn
             raise HTTPException(404, "Student not found")
         if exam.class_id and not db.scalar(select(ClassMembership.id).where(ClassMembership.class_id == exam.class_id, ClassMembership.student_id == student.id)) and student.class_id != exam.class_id:
             raise HTTPException(422, "Student is not enrolled in the exam class.")
+        submission.released_at = None
+        submission.released_by_teacher_id = None
         if db.scalar(select(Submission.id).where(Submission.exam_id == exam.id, Submission.student_id == student.id, Submission.id != submission.id, Submission.archived_at.is_(None)).limit(1)):
             raise HTTPException(409, "This student already has an active paper for this exam.")
         submission.student_id = student.id
@@ -1347,6 +1508,9 @@ async def replace_submission_page(submission_id: str, page_id: str, background_t
     if file.content_type not in {"image/jpeg", "image/png"}:
         raise HTTPException(415, "Rescan replacement must be a JPEG or PNG image.")
     contents = await file.read()
+    if len(contents) > settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(413, f"Files must be smaller than {settings.max_upload_mb} MB.")
+    validate_upload_bytes(contents, file.content_type)
     if not contents:
         raise HTTPException(400, "The replacement page is empty.")
     path = UPLOADS / f"rescan-{uuid.uuid4()}{'.jpg' if file.content_type == 'image/jpeg' else '.png'}"

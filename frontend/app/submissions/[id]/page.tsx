@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
-import { api } from "@/lib/api";
+import { api, csrfHeaders } from "@/lib/api";
 
 const API = "/api";
 
@@ -108,7 +108,7 @@ export default function SubmissionPage({
     const response = await fetch(`${API}/evaluations/${selected.id}`, {
       method: "PATCH",
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
       body: JSON.stringify({
         marks: Number(overrideMarks),
         reason: overrideReason || null,
@@ -135,7 +135,7 @@ export default function SubmissionPage({
     const response = await fetch(`${API}/evaluations/${selected.id}/review`, {
       method: "POST",
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
       body: JSON.stringify({ comment: challenge }),
     });
     if (response.ok) {
@@ -169,7 +169,7 @@ export default function SubmissionPage({
     setSaving(true);
     const response = await fetch(
       `${API}/evaluations/${selected.id}/complete-review`,
-      { method: "POST", credentials: "include" },
+        { method: "POST", credentials: "include", headers: csrfHeaders() },
     );
     if (response.ok) {
       const data = await (

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, csrfHeaders } from "@/lib/api";
 import { AppShell } from "@/components/app-shell";
 
 const API = "/api";
@@ -141,6 +141,7 @@ export default function NewExamPage() {
       const response = await fetch(`${API}/exam-drafts/import`, {
         method: "POST",
         credentials: "include",
+        headers: csrfHeaders(),
         body: form,
       });
       const draft = await response.json().catch(() => null);
@@ -241,7 +242,7 @@ export default function NewExamPage() {
       const response = await fetch(`${API}/exams`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({
           title,
           subject,

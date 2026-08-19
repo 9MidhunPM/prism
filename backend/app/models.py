@@ -265,3 +265,25 @@ class ProcessingJob(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class DriveImportBatch(Base):
+    __tablename__ = "drive_import_batches"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
+    exam_id: Mapped[str] = mapped_column(ForeignKey("exams.id"), index=True)
+    root_folder_id: Mapped[str] = mapped_column(String(255))
+    state: Mapped[str] = mapped_column(String(30), default="previewed")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DriveImportItem(Base):
+    __tablename__ = "drive_import_items"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("drive_import_batches.id"), index=True)
+    folder_id: Mapped[str] = mapped_column(String(255))
+    folder_name: Mapped[str] = mapped_column(String(255))
+    student_id: Mapped[str | None] = mapped_column(ForeignKey("students.id"), nullable=True, index=True)
+    pages: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(30), default="unresolved")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
