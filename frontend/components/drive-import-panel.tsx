@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 
 type RosterStudent = { id: string; name: string; identifier: string };
@@ -40,6 +40,28 @@ function loadScript(src: string) {
   });
 }
 
+function loadPickerApi() {
+  return new Promise<void>((resolve, reject) => {
+    if (!window.gapi?.load) {
+      reject(new Error("Google Picker is unavailable. Refresh the page and try again."));
+      return;
+    }
+    let settled = false;
+    const timeout = window.setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        reject(new Error("Google Picker took too long to load."));
+      }
+    }, 10000);
+    window.gapi.load("picker", () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      resolve();
+    });
+  });
+}
+
 export function DriveImportPanel({ examId, roster }: { examId: string; roster: RosterStudent[] }) {
   const [open, setOpen] = useState(false);
   const [token, setToken] = useState("");
@@ -48,6 +70,7 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const pickerRef = useRef<any>(null);
 
   useEffect(() => {
     if (!open || !clientId) return;
@@ -67,7 +90,7 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
         loadScript("https://apis.google.com/js/api.js"),
         loadScript("https://accounts.google.com/gsi/client"),
       ]);
-      await new Promise<void>((resolve) => window.gapi.load("picker", resolve));
+      await loadPickerApi();
       const accessToken = await new Promise<string>((resolve, reject) => {
         const tokenClient = window.google.accounts.oauth2.initTokenClient({
           client_id: clientId,
@@ -79,26 +102,47 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
       setToken(accessToken);
       const view = new window.google.picker.DocsView()
         .setIncludeFolders(true)
-        .setSelectFolderEnabled(true)
-        .setMimeTypes("application/vnd.google-apps.folder");
+        .setSelectFolderEnabled(true);
       const picker = new window.google.picker.PickerBuilder()
         .setDeveloperKey(apiKey)
         .setAppId(appId)
         .setOAuthToken(accessToken)
+        .setOrigin(window.location.origin)
+        .setTitle("Choose the student papers folder")
         .addView(view)
         .setCallback((data: any) => {
-          if (data.action === window.google.picker.Action.PICKED) {
+          const action = data.action ?? data[window.google.picker.Response.ACTION];
+          if (action === window.google.picker.Action.PICKED) {
             const folder = data.docs?.[0];
-            if (folder?.id) void preview(folder.id, accessToken);
+            const folderId = folder?.id ?? folder?.[window.google.picker.Document.ID];
+            picker.setVisible(false);
+            pickerRef.current = null;
+            if (folderId) void preview(folderId, accessToken);
+          } else if (action === window.google.picker.Action.CANCEL || action === window.google.picker.Action.ERROR) {
+            picker.setVisible(false);
+            pickerRef.current = null;
+            setStatus("");
+            if (action === window.google.picker.Action.ERROR) setError("Google Drive could not open the folder picker. Check the Picker API key and project number.");
           }
         })
         .build();
+      pickerRef.current = picker;
       picker.setVisible(true);
       setStatus("");
     } catch (reason) {
+      pickerRef.current?.setVisible(false);
+      pickerRef.current = null;
       setStatus("");
       setError(reason instanceof Error ? reason.message : "Google Drive could not be opened.");
     }
+  }
+
+  function closeImportPanel() {
+    pickerRef.current?.setVisible(false);
+    pickerRef.current = null;
+    setOpen(false);
+    setStatus("");
+    setError("");
   }
 
   async function preview(folderId: string, accessToken: string) {
@@ -140,6 +184,9 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
         <button type="button" className="button-secondary" onClick={() => { setOpen(true); void chooseFolder(); }}>Choose Drive folder</button>
       </div>
       {open && <div className="mt-4 rounded-lg bg-[var(--surface-muted)] p-4">
+        <div className="mb-3 flex justify-end">
+          <button type="button" className="button-quiet px-2 py-1 text-xs" onClick={closeImportPanel}>Close</button>
+        </div>
         {error && <p role="alert" className="text-sm text-[var(--review)]">{error}</p>}
         {status && <p className="text-sm text-[var(--ink-muted)]">{status}</p>}
         {!items.length && !error && <p className="text-xs text-[var(--ink-muted)]">Expected structure: `Students / Student Name / 1.jpeg, 2.jpeg`.</p>}
