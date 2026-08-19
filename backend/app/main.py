@@ -1412,6 +1412,7 @@ async def start_processing(submission_id: str, background_tasks: BackgroundTasks
     with session() as db:
         submission = owned_submission(db, submission_id, teacher["id"])
         if submission.status in {SubmissionStatus.PREPROCESSING, SubmissionStatus.TRANSCRIBING, SubmissionStatus.GRADING}: raise HTTPException(409, "Submission processing is already in progress.")
+        if submission.status not in {SubmissionStatus.UPLOADED, SubmissionStatus.FAILED, SubmissionStatus.RESCAN_REQUIRED}: raise HTTPException(409, "Only new, failed, or rescan-required submissions can be processed again.")
     background_tasks.add_task(process_submission, submission_id); return {"id": submission_id, "status": "queued"}
 
 
@@ -1419,7 +1420,7 @@ async def start_processing(submission_id: str, background_tasks: BackgroundTasks
 async def retry_processing(submission_id: str, background_tasks: BackgroundTasks, teacher: dict = Depends(current_teacher)):
     with session() as db:
         submission = owned_submission(db, submission_id, teacher["id"])
-        if submission.status not in {SubmissionStatus.FAILED, SubmissionStatus.REVIEW_REQUIRED, SubmissionStatus.COMPLETED, SubmissionStatus.RESCAN_REQUIRED}: raise HTTPException(409, "Only finished or failed submissions can be retried.")
+        if submission.status not in {SubmissionStatus.FAILED, SubmissionStatus.RESCAN_REQUIRED}: raise HTTPException(409, "Only failed or rescan-required submissions can be retried without losing assessment history.")
     background_tasks.add_task(process_submission, submission_id); return {"id": submission_id, "status": "queued"}
 
 
@@ -1526,16 +1527,20 @@ def get_page_preview(page_id: str, teacher: dict = Depends(current_teacher)):
 def archive_submission(submission_id: str, archived: bool = True, teacher: dict = Depends(current_teacher)):
     with session() as db:
         submission = owned_submission(db, submission_id, teacher["id"])
+        submission.archived_at = datetime.now(timezone.utc) if archived else None
+        db.commit()
+    return {"id": submission_id, "archived": archived}
+
+
+@app.delete("/api/submissions/{submission_id}")
+def delete_submission(submission_id: str, teacher: dict = Depends(current_teacher)):
+    with session() as db:
+        submission = owned_submission(db, submission_id, teacher["id"])
         paths = delete_submission_data(db, submission)
         db.commit()
         remove_unreferenced_media(db, paths)
         db.commit()
     return {"id": submission_id, "deleted": True}
-
-
-@app.delete("/api/submissions/{submission_id}")
-def delete_submission(submission_id: str, teacher: dict = Depends(current_teacher)):
-    return archive_submission(submission_id, teacher=teacher)
 
 
 @app.patch("/api/submissions/{submission_id}/student")
@@ -1577,6 +1582,8 @@ async def replace_submission_page(submission_id: str, page_id: str, background_t
         page = db.scalar(select(SubmissionPage).where(SubmissionPage.id == page_id, SubmissionPage.submission_id == submission.id))
         if not page:
             raise HTTPException(404, "Submission page not found")
+        if submission.status in {SubmissionStatus.COMPLETED, SubmissionStatus.REVIEW_REQUIRED}:
+            raise HTTPException(409, "Completed assessment history is immutable. Create a new submission for a replacement scan.")
         clear_submission_results(db, submission_id)
         page.original_key = str(path)
         page.mime_type = file.content_type
