@@ -252,12 +252,14 @@ class ReleaseInput(BaseModel):
 class DrivePreviewInput(BaseModel):
     root_folder_id: str = Field(min_length=3, max_length=255)
     access_token: str = Field(min_length=20, max_length=4096)
+    folder_mode: Literal["main", "student"] = "main"
 
 
 class DriveCommitInput(BaseModel):
     access_token: str = Field(min_length=20, max_length=4096)
     assignments: dict[str, str] = {}
     new_student_names: dict[str, str] = {}
+    skipped_folders: list[str] = []
 
 
 def imported_draft(result) -> dict:
@@ -1165,6 +1167,16 @@ async def drive_children(access_token: str, parent_id: str, folders_only: bool =
     return files
 
 
+async def drive_metadata(access_token: str, file_id: str) -> dict:
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(f"https://www.googleapis.com/drive/v3/files/{file_id}", headers=headers, params={"fields": "id,name,mimeType"})
+    if response.status_code in {401, 403}:
+        raise HTTPException(403, "Google Drive authorization expired or does not allow this folder.")
+    response.raise_for_status()
+    return response.json()
+
+
 async def drive_descendant_files(access_token: str, folder_id: str, depth: int = 0, visited: set[str] | None = None) -> list[dict]:
     """Walk a student folder so page files can be organized in nested Drive folders."""
     if depth > 6:
@@ -1195,7 +1207,13 @@ async def preview_drive_import(exam_id: str, payload: DrivePreviewInput, teacher
         exam = active_owned_exam(db, exam_id, teacher["id"])
         students = db.scalars(select(Student).where(Student.class_id == exam.class_id, Student.archived_at.is_(None))) if exam.class_id else []
         by_name = {" ".join(student.name.casefold().split()): student for student in students}
-    folders = await drive_children(payload.access_token, payload.root_folder_id, folders_only=True)
+    if payload.folder_mode == "student":
+        selected_folder = await drive_metadata(payload.access_token, payload.root_folder_id)
+        if selected_folder.get("mimeType") != "application/vnd.google-apps.folder":
+            raise HTTPException(422, "Choose a Google Drive folder.")
+        folders = [{"id": payload.root_folder_id, "name": selected_folder.get("name", "Selected student folder")}]
+    else:
+        folders = await drive_children(payload.access_token, payload.root_folder_id, folders_only=True)
     if not folders:
         raise HTTPException(422, "The selected Drive folder has no student folders.")
     items = []
@@ -1229,8 +1247,14 @@ async def commit_drive_import(batch_id: str, payload: DriveCommitInput, backgrou
         db.commit()
     headers = {"Authorization": f"Bearer {payload.access_token}"}
     imported = []
+    skipped = []
     async with httpx.AsyncClient(timeout=60) as client:
         for item in items:
+            if item["folder_id"] in payload.skipped_folders:
+                with session() as db:
+                    stored = db.get(DriveImportItem, item["id"]); stored.status = "skipped"; stored.error = "Skipped by teacher."; db.commit()
+                skipped.append(item["folder_id"])
+                continue
             student_id = payload.assignments.get(item["folder_id"], item["student_id"])
             student_name = payload.new_student_names.get(item["folder_id"], "").strip()
             if not student_id and len(student_name) < 2:
@@ -1262,7 +1286,7 @@ async def commit_drive_import(batch_id: str, payload: DriveCommitInput, backgrou
         batch = db.get(DriveImportBatch, batch_id)
         batch.state = "completed"
         db.commit()
-    return {"id": batch_id, "state": "completed", "imported": imported}
+    return {"id": batch_id, "state": "completed", "imported": imported, "skipped": skipped}
 
 
 @app.get("/api/exams")

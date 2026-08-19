@@ -25,6 +25,7 @@ const apiKey = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_API_KEY;
 const appId = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_APP_ID;
 const driveScope = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_SCOPE ?? "https://www.googleapis.com/auth/drive.readonly";
 const NEW_STUDENT = "__new_student__";
+const SKIP_STUDENT = "__skip_student__";
 
 function loadScript(src: string) {
   return new Promise<void>((resolve, reject) => {
@@ -81,7 +82,7 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
     void loadScript("https://accounts.google.com/gsi/client").catch((reason) => setError(reason instanceof Error ? reason.message : "Google Drive could not be loaded."));
   }, [open]);
 
-  async function chooseFolder() {
+  async function chooseFolder(mode: "main" | "student") {
     setError("");
     setStatus("Opening Google Drive...");
     if (!clientId || !apiKey || !appId) {
@@ -113,7 +114,7 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
         .setAppId(appId)
         .setOAuthToken(accessToken)
         .setOrigin(window.location.origin)
-        .setTitle("Choose the student papers folder")
+        .setTitle(mode === "student" ? "Choose a student folder" : "Choose the student papers folder")
         .addView(view)
         .setCallback((data: any) => {
           const action = data.action ?? data[window.google.picker.Response.ACTION];
@@ -126,7 +127,7 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
             picker.setVisible(false);
             pickerRef.current = null;
             if (pickerTimeoutRef.current !== null) window.clearTimeout(pickerTimeoutRef.current);
-            if (folderId) void preview(folderId, accessToken);
+            if (folderId) void preview(folderId, accessToken, mode);
           } else if (action === window.google.picker.Action.CANCEL || action === window.google.picker.Action.ERROR) {
             picker.setVisible(false);
             pickerRef.current = null;
@@ -165,10 +166,10 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
     setError("");
   }
 
-  async function preview(folderId: string, accessToken: string) {
+  async function preview(folderId: string, accessToken: string, mode: "main" | "student") {
     setStatus("Scanning student folders...");
     try {
-      const result = await api.post<{ id: string; items: DriveItem[] }>(`/api/exams/${examId}/imports/drive/preview`, { root_folder_id: folderId, access_token: accessToken });
+      const result = await api.post<{ id: string; items: DriveItem[] }>(`/api/exams/${examId}/imports/drive/preview`, { root_folder_id: folderId, access_token: accessToken, folder_mode: mode });
       setBatchId(result.id);
       setItems(result.items);
       setAssignments(result.items.reduce<Record<string, string>>((current, item) => {
@@ -193,13 +194,22 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
       const newNames = Object.fromEntries(Object.entries(assignments)
         .filter(([, value]) => value === NEW_STUDENT)
         .map(([folderId]) => [folderId, newStudentNames[folderId] ?? ""]));
-      await api.post(`/api/imports/${batchId}/commit`, { access_token: token, assignments: existingAssignments, new_student_names: newNames });
+      const skippedFolders = Object.entries(assignments)
+        .filter(([, value]) => value === SKIP_STUDENT)
+        .map(([folderId]) => folderId);
+      const result = await api.post<{ skipped?: string[] }>(`/api/imports/${batchId}/commit`, { access_token: token, assignments: existingAssignments, new_student_names: newNames, skipped_folders: skippedFolders });
+      const skipped = new Set(result.skipped ?? skippedFolders);
       setStatus("Papers imported. Processing has started.");
-      setItems((current) => current.map((item) => ({ ...item, status: "imported" })));
+      setItems((current) => current.map((item) => skipped.has(item.folder_id) ? { ...item, status: "skipped", error: "Skipped by teacher." } : { ...item, status: "imported" }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The Drive papers could not be imported.");
       setStatus("");
     }
+  }
+
+  function isReadyToImport(item: DriveItem) {
+    const assignment = assignments[item.folder_id];
+    return Boolean(assignment) && (assignment === SKIP_STUDENT || (item.pages.length > 0 && (assignment !== NEW_STUDENT || (newStudentNames[item.folder_id] ?? item.folder_name).trim().length >= 2)));
   }
 
   return (
@@ -207,9 +217,12 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <div>
           <h3 className="font-serif text-2xl font-semibold">Import from Google Drive</h3>
-          <p className="mt-1 text-sm text-[var(--ink-muted)]">Choose a folder containing one folder per student and numbered image pages.</p>
+          <p className="mt-1 text-sm text-[var(--ink-muted)]">Choose the main papers folder or import one student folder directly.</p>
         </div>
-        <button type="button" className="button-secondary" onClick={() => { setOpen(true); void chooseFolder(); }}>Choose Drive folder</button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="button-secondary" onClick={() => { setOpen(true); void chooseFolder("main"); }}>Choose main folder</button>
+          <button type="button" className="button-secondary" onClick={() => { setOpen(true); void chooseFolder("student"); }}>Choose student folder</button>
+        </div>
       </div>
       {open && <div className="mt-4 rounded-lg bg-[var(--surface-muted)] p-4">
         <div className="mb-3 flex justify-end">
@@ -227,12 +240,13 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
                  <option value="">Choose student</option>
                  {roster.map((student) => <option key={student.id} value={student.id}>{student.name} ({student.identifier})</option>)}
                  <option value={NEW_STUDENT}>New student</option>
+                 <option value={SKIP_STUDENT}>Skip this folder</option>
                  </select>
                  {assignments[item.folder_id] === NEW_STUDENT && <input aria-label={`New student name for ${item.folder_name}`} className="input" value={newStudentNames[item.folder_id] ?? item.folder_name} onChange={(event) => setNewStudentNames((current) => ({ ...current, [item.folder_id]: event.target.value }))} placeholder={item.folder_name} />}
                </div>
              </div>)}
            </div>
-           <button type="button" className="button-primary mt-4" disabled={!batchId || items.some((item) => !assignments[item.folder_id] || (assignments[item.folder_id] === NEW_STUDENT && (newStudentNames[item.folder_id] ?? item.folder_name).trim().length < 2) || !item.pages.length)} onClick={() => void commit()}>Import confirmed papers</button>
+           <button type="button" className="button-primary mt-4" disabled={!batchId || items.some((item) => !isReadyToImport(item))} onClick={() => void commit()}>Import confirmed papers</button>
          </>}
       </div>}
     </section>
