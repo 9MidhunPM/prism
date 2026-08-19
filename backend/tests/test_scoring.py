@@ -32,6 +32,13 @@ def test_exam_totals_are_deterministic(isolated_database):
     assert exam["total_marks"] == 2
 
 
+def test_optional_answer_key_is_preserved_without_affecting_marks(isolated_database):
+    teacher = teacher_id()
+    exam = create_exam(ExamInput(title="T", subject="S", questions=[QuestionInput(number="Q1", text="Question", answer_key="A correct explanation", criteria=[CriterionInput(title="C", description="D", max_marks=2, concept="X")])]), teacher)
+    assert exam["total_marks"] == 2
+    assert exam["questions"][0]["answer_key"] == "A correct explanation"
+
+
 def test_upload_rejects_unsupported_file_type(isolated_database):
     teacher = teacher_id()
     exam = exam_for(teacher)

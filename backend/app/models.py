@@ -120,6 +120,7 @@ class Question(Base):
     text: Mapped[str] = mapped_column(Text)
     max_marks: Mapped[float] = mapped_column(Float)
     concept_tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    answer_key: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class RubricCriterion(Base):

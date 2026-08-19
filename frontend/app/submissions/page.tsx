@@ -13,6 +13,7 @@ type Submission = {
   exam_id: string;
   exam_title: string;
   total_score: number;
+  total_marks: number;
   status: string;
   created_at: string;
 };
@@ -69,7 +70,7 @@ export default function SubmissionsPage() {
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                <span className="font-mono text-sm">{row.total_score}</span>
+                <span className="font-mono text-sm">{row.total_score}/{row.total_marks}</span>
                 <Link
                   href={`/submissions/${row.id}`}
                   className="button-secondary"

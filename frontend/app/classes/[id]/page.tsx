@@ -38,6 +38,7 @@ export default function ClassPage({
   const [error, setError] = useState("");
   const [csv, setCsv] = useState("");
   const [studentSearch, setStudentSearch] = useState("");
+  const [searchingStudents, setSearchingStudents] = useState(false);
   const [existingStudents, setExistingStudents] = useState<
     { id: string; name: string; identifier: string; class_name: string }[]
   >([]);
@@ -58,10 +59,7 @@ export default function ClassPage({
     );
   }, [params]);
   useEffect(() => {
-    if (studentSearch.trim().length < 2) {
-      setExistingStudents([]);
-      return;
-    }
+    setSearchingStudents(true);
     const timer = window.setTimeout(
       () =>
         api
@@ -74,11 +72,15 @@ export default function ClassPage({
             }[]
           >(`/api/students?q=${encodeURIComponent(studentSearch)}`)
           .then(setExistingStudents)
-          .catch(() => setExistingStudents([])),
+          .catch(() => setExistingStudents([]))
+          .finally(() => setSearchingStudents(false)),
       150,
     );
     return () => window.clearTimeout(timer);
   }, [studentSearch]);
+  const availableStudents = existingStudents.filter(
+    (student) => !data?.students.some((current) => current.id === student.id),
+  );
   async function addStudent(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!data || !name.trim() || !identifier.trim()) return;
@@ -255,15 +257,19 @@ export default function ClassPage({
             </form>
             <div className="mt-6 border-t border-[var(--line)] pt-5">
               <h3 className="font-semibold">Add an existing student</h3>
+              <p className="mt-1 text-sm text-[var(--ink-muted)]">Search the current roster by name or identifier.</p>
               <input
                 value={studentSearch}
                 onChange={(event) => setStudentSearch(event.target.value)}
                 className="input mt-3"
                 placeholder="Search students by name or identifier"
               />
-              {existingStudents.length > 0 && (
-                <div className="mt-2 overflow-hidden rounded-lg border border-[var(--line)]">
-                  {existingStudents.map((student) => (
+              <div className="mt-2 overflow-hidden rounded-lg border border-[var(--line)]">
+                {searchingStudents && <p className="px-3 py-2 text-sm text-[var(--ink-muted)]">Searching students...</p>}
+                {!searchingStudents && availableStudents.length === 0 && <p className="px-3 py-2 text-sm text-[var(--ink-muted)]">No available students match this search.</p>}
+                {availableStudents.length > 0 && (
+                  <>
+                  {availableStudents.map((student) => (
                     <button
                       key={student.id}
                       type="button"
@@ -279,8 +285,9 @@ export default function ClassPage({
                       <span className="text-[var(--brand)]">Add</span>
                     </button>
                   ))}
-                </div>
-              )}
+                  </>
+                )}
+              </div>
             </div>
           </section>
         </div>

@@ -13,8 +13,8 @@ from .settings import get_settings
 settings = get_settings()
 MODEL = settings.luna_model
 PERCEPTION_VERSION = "perception_v2"
-GRADING_VERSION = "grading_v2"
-REVIEW_VERSION = "review_v2"
+GRADING_VERSION = "grading_v3"
+REVIEW_VERSION = "review_v3"
 STUDENT_PROFILE_VERSION = "student_profile_v1"
 CLASS_ANALYSIS_VERSION = "class_analysis_v1"
 TEACHER_CHAT_VERSION = "teacher_chat_v1"
@@ -115,6 +115,17 @@ class ExamImportResult(BaseModel):
     warnings: list[str] = []
 
 
+class AnswerKeyEntry(BaseModel):
+    question_number: str
+    answer_key: str
+    confidence: float = Field(ge=0, le=1)
+
+
+class AnswerKeyImportResult(BaseModel):
+    answers: list[AnswerKeyEntry]
+    warnings: list[str] = []
+
+
 def image_content(path: str, mime_type: str) -> dict:
     if mime_type == "application/pdf":
         document = fitz.open(path)
@@ -138,14 +149,15 @@ Use [ILLEGIBLE] for unreadable text and [UNCERTAIN: option A | option B] for amb
     return response.output_parsed
 
 
-async def grade_criterion(pages: list[tuple[int, str, str]], question: str, criterion: dict, transcription: str) -> GradeResult:
+async def grade_criterion(pages: list[tuple[int, str, str]], question: str, criterion: dict, transcription: str, answer_key: str | None = None) -> GradeResult:
     openai_client = client()
     prompt = f"""You are PRISM's rubric grading operation ({GRADING_VERSION}). Grade only this one criterion.
 Question: {question}
 Criterion: {criterion['title']} - {criterion['description']}
 Maximum marks: {criterion['max_marks']}
 Student transcription, labelled by page: {transcription}
-Use every supplied image as ground evidence. Award a score between zero and the maximum. Every evidence item must quote exact evidence and identify its supplied page number. Set blocking_reason only when evidence is unreadable, missing, or irreconcilably ambiguous enough that a responsible mark cannot be finalized. Ordinary uncertainty belongs in confidence, not blocking_reason. Do not calculate totals."""
+Teacher reference answer: {answer_key.strip() if answer_key and answer_key.strip() else "No teacher answer key was supplied."}
+The rubric criterion is the scoring authority. A teacher reference answer is a non-exhaustive example, not required wording. Accept correct answers in the student's own words, valid synonyms, equivalent notation, and valid alternative methods when they demonstrate the criterion. Judge conceptual, factual, mathematical, and logical equivalence; never require keyword overlap or exact phrase matching. Do not award marks merely because isolated expected words appear: assess the student's complete reasoning, including contradictions and material omissions. Use every supplied image as ground evidence. Award a score between zero and the maximum. Every evidence item must quote exact evidence and identify its supplied page number. Set blocking_reason only when evidence is unreadable, missing, or irreconcilably ambiguous enough that a responsible mark cannot be finalized. Ordinary uncertainty belongs in confidence, not blocking_reason. Do not calculate totals."""
     content = [{"type": "input_text", "text": prompt}]
     for page_number, path, mime_type in pages:
         content.append({"type": "input_text", "text": f"Original paper page {page_number}:"})
@@ -154,7 +166,7 @@ Use every supplied image as ground evidence. Award a score between zero and the 
     return response.output_parsed
 
 
-async def review_criterion(pages: list[tuple[int, str, str]], question: str, criterion: dict, transcription: str, current_marks: float, current_reason: str, teacher_comment: str) -> ReviewResult:
+async def review_criterion(pages: list[tuple[int, str, str]], question: str, criterion: dict, transcription: str, current_marks: float, current_reason: str, teacher_comment: str, answer_key: str | None = None) -> ReviewResult:
     openai_client = client()
     prompt = f"""You are PRISM's teacher review operation ({REVIEW_VERSION}). Re-evaluate only this criterion.
 Question: {question}
@@ -164,7 +176,8 @@ Student transcription: {transcription}
 Current suggested marks: {current_marks}
 Current reason: {current_reason}
 Teacher comment: {teacher_comment}
-Use every supplied original-paper image as ground evidence. Return a suggested score between zero and the maximum, concise evidence-backed reasoning, and exact evidence quotes. Do not calculate totals and do not change any stored score."""
+Teacher reference answer: {answer_key.strip() if answer_key and answer_key.strip() else "No teacher answer key was supplied."}
+The rubric criterion is the scoring authority. Treat the reference answer as a non-exhaustive example: accept correct own-word explanations, valid synonyms, equivalent notation, and valid alternative methods. Judge the whole response for conceptual, factual, mathematical, and logical equivalence, not keyword or phrase overlap. Use every supplied original-paper image as ground evidence. Return a suggested score between zero and the maximum, concise evidence-backed reasoning, and exact evidence quotes. Do not calculate totals and do not change any stored score."""
     content = [{"type": "input_text", "text": prompt}]
     for page_number, path, mime_type in pages:
         content.append({"type": "input_text", "text": f"Original paper page {page_number}:"})
@@ -200,4 +213,14 @@ Suggest concise rubric criteria that a teacher must review before saving. Each c
         input=[{"role": "user", "content": content}],
         text_format=ExamImportResult,
     )
+    return response.output_parsed
+
+
+async def import_answer_key_pages(pages: list[tuple[str, str]], question_numbers: list[str]) -> AnswerKeyImportResult:
+    openai_client = client()
+    prompt = f"""You are PRISM's answer-key import operation (answer_key_import_v1).
+Extract only teacher reference answers from the supplied marking-scheme pages. Expected question identifiers: {question_numbers}. Map each extracted answer only to a visible or unambiguous expected identifier. Preserve formulas and instructional wording. Do not invent answers or marks. Return warnings for unmatched, ambiguous, or missing identifiers."""
+    content = [{"type": "input_text", "text": prompt}]
+    content.extend(image_content(path, mime_type) for path, mime_type in pages)
+    response = await openai_client.responses.parse(model=model_for("exam_import"), input=[{"role": "user", "content": content}], text_format=AnswerKeyImportResult)
     return response.output_parsed

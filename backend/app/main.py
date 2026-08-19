@@ -19,8 +19,8 @@ from sqlalchemy import func, select, text
 
 from . import database
 from .ai import (EXAM_IMPORT_VERSION, PERCEPTION_VERSION, PerceptionResult,
-                 answer_teacher_question, grade_criterion, import_exam_pages,
-                 model_for, perceive_page, review_criterion)
+                  answer_teacher_question, grade_criterion, import_exam_pages,
+                  import_answer_key_pages, model_for, perceive_page, review_criterion)
 from .auth import hash_password, random_token, token_hash, verify_password
 from .demo import seed_demo_accounts
 from .models import (AIArtifact, Account, AccountRole, Answer, AuthSession, ClassCohort, ClassMembership, CriterionEvaluation, EvaluationEvidence, Exam,
@@ -160,6 +160,7 @@ class CriterionInput(BaseModel):
 class QuestionInput(BaseModel):
     number: str
     text: str
+    answer_key: str | None = Field(default=None, max_length=12000)
     criteria: list[CriterionInput]
 
 
@@ -363,7 +364,7 @@ def exam_detail(exam_id: str, teacher_id: str | None = None) -> dict:
         questions = []
         for question in db.scalars(select(Question).where(Question.exam_id == exam.id).order_by(Question.number)):
             criteria = [criterion_data(c) for c in db.scalars(select(RubricCriterion).where(RubricCriterion.question_id == question.id))]
-            questions.append({"id": question.id, "exam_id": question.exam_id, "number": question.number, "text": question.text, "max_marks": sum(c["max_marks"] for c in criteria), "criteria": criteria})
+            questions.append({"id": question.id, "exam_id": question.exam_id, "number": question.number, "text": question.text, "answer_key": question.answer_key, "max_marks": sum(c["max_marks"] for c in criteria), "criteria": criteria})
         return {"id": exam.id, "title": exam.title, "subject": exam.subject, "date": exam.date.isoformat() if exam.date else None, "created_at": exam.created_at, "teacher_id": exam.teacher_id, "class_id": exam.class_id, "archived_at": exam.archived_at, "questions": questions, "total_marks": sum(q["max_marks"] for q in questions)}
 
 
@@ -382,7 +383,7 @@ def create_exam(payload: ExamInput, teacher_id: str) -> dict:
         db.add(exam)
         db.flush()
         for question_input in payload.questions:
-            question = Question(exam_id=exam.id, number=question_input.number, text=question_input.text, max_marks=sum(c.max_marks for c in question_input.criteria), concept_tags=[])
+            question = Question(exam_id=exam.id, number=question_input.number, text=question_input.text, answer_key=question_input.answer_key.strip() if question_input.answer_key and question_input.answer_key.strip() else None, max_marks=sum(c.max_marks for c in question_input.criteria), concept_tags=[])
             db.add(question)
             db.flush()
             for index, criterion in enumerate(question_input.criteria, 1):
@@ -408,6 +409,7 @@ def submission_summary(submission: Submission, student: Student, exam: Exam) -> 
         "student_id": submission.student_id,
         "status": submission.status.value,
         "total_score": submission.total_score,
+        "total_marks": exam.total_marks,
         "created_at": submission.created_at,
         "error": submission.error,
         "archived_at": submission.archived_at,
@@ -619,7 +621,7 @@ async def process_submission(submission_id: str) -> None:
             if not mapped_answers:
                 continue
             for criterion in criteria:
-                result = await grade_criterion(question_pages, question.text, criterion_data(criterion), transcription)
+                result = await grade_criterion(question_pages, question.text, criterion_data(criterion), transcription, question.answer_key)
                 with session() as db:
                     low_confidence = result.confidence < REVIEW_THRESHOLD or any(answer.uncertainty or (answer.confidence or 0) < REVIEW_THRESHOLD for answer in mapped_answers)
                     review_severity = "review_required" if result.blocking_reason else "review_recommended" if low_confidence else None
@@ -769,8 +771,25 @@ def dashboard(teacher: dict = Depends(current_teacher)):
             bucket[3] += int(evaluation.review_severity == "review_recommended" and not evaluation.review_resolved)
         attention = [{"name": name, "mastery": round(score / maximum * 100) if maximum else 0, "required_reviews": int(required), "recommended_reviews": int(recommended)} for name, (score, maximum, required, recommended) in concepts.items()]
         attention.sort(key=lambda item: (-item["required_reviews"], -item["recommended_reviews"], item["mastery"], item["name"]))
+        review_papers = []
+        for submission, student, exam in all_rows:
+            reasons = []
+            if submission.status == SubmissionStatus.FAILED:
+                reasons.append("Processing failed")
+            if submission.mapping_review_required:
+                reasons.append("Answer mapping needs review")
+            if any(page.quality_status == "rescan_required" for page in db.scalars(select(SubmissionPage).where(SubmissionPage.submission_id == submission.id))):
+                reasons.append("Rescan required")
+            evaluations = db.scalars(select(CriterionEvaluation).join(Answer).where(Answer.submission_id == submission.id, CriterionEvaluation.review_resolved.is_(False))).all()
+            if any(item.review_severity == "review_required" for item in evaluations):
+                reasons.append("Teacher review required")
+            elif any(item.review_severity == "review_recommended" for item in evaluations):
+                reasons.append("Teacher review recommended")
+            if reasons:
+                review_papers.append({**submission_summary(submission, student, exam), "reason": reasons[0], "priority": 0 if "required" in reasons[0].lower() or submission.status == SubmissionStatus.FAILED else 1})
+        review_papers.sort(key=lambda item: (item["priority"], -item["created_at"].timestamp()))
         rows = db.execute(active_submission_rows(db, teacher["id"]).order_by(Submission.created_at.desc()).limit(8)).all()
-        return {"exams": [{"id": e.id, "title": e.title, "subject": e.subject, "date": e.date, "created_at": e.created_at, "teacher_id": e.teacher_id, "class_id": e.class_id} for e in exams], "metrics": {"active_exams": len(exams), "total_papers": len(all_rows), "completed_papers": len(completed), "in_progress_papers": len(in_progress), "failed_papers": len(failed), "average_percentage": average_percentage, "required_reviews": required_reviews, "recommended_reviews": recommended_reviews}, "pending_reviews": required_reviews + recommended_reviews, "attention": attention[:4], "submissions": [submission_summary(s, st, ex) for s, st, ex in rows]}
+        return {"exams": [{"id": e.id, "title": e.title, "subject": e.subject, "date": e.date, "created_at": e.created_at, "teacher_id": e.teacher_id, "class_id": e.class_id} for e in exams], "metrics": {"active_exams": len(exams), "total_papers": len(all_rows), "completed_papers": len(completed), "in_progress_papers": len(in_progress), "failed_papers": len(failed), "average_percentage": average_percentage, "required_reviews": required_reviews, "recommended_reviews": recommended_reviews}, "pending_reviews": required_reviews + recommended_reviews, "review_papers": review_papers[:6], "submissions": [submission_summary(s, st, ex) for s, st, ex in rows]}
 
 
 @app.post("/api/exams")
@@ -923,6 +942,8 @@ def add_existing_student_to_class(class_id: str, payload: StudentAssignmentInput
         student = db.scalar(select(Student).join(ClassCohort).where(Student.id == payload.student_id, ClassCohort.teacher_id == teacher["id"], Student.archived_at.is_(None)))
         if not student:
             raise HTTPException(404, "Student not found")
+        if student.class_id == cohort.id:
+            raise HTTPException(409, "Student is already in this class.")
         if db.scalar(select(ClassMembership.id).where(ClassMembership.class_id == cohort.id, ClassMembership.student_id == student.id)):
             raise HTTPException(409, "Student is already in this class.")
         db.add(ClassMembership(class_id=cohort.id, student_id=student.id))
@@ -1019,6 +1040,43 @@ async def import_exam_draft(file: UploadFile = File(...), teacher: dict = Depend
         ))
         db.commit()
     return {**draft, "cached": False}
+
+
+@app.post("/api/answer-keys/import")
+async def import_answer_key(file: UploadFile = File(...), question_numbers: str = Form(...), teacher: dict = Depends(current_teacher)):
+    if not settings.openai_enabled:
+        raise HTTPException(503, "OPENAI_API_KEY is required to import an answer key.")
+    if file.content_type not in ALLOWED_TYPES:
+        raise HTTPException(415, "Upload a JPEG, PNG, or PDF answer key.")
+    try:
+        numbers = json.loads(question_numbers)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(422, "Question numbers must be a JSON array.") from exc
+    if not isinstance(numbers, list) or not numbers or not all(isinstance(number, str) and number.strip() for number in numbers):
+        raise HTTPException(422, "Provide at least one question number.")
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(400, "The answer key is empty.")
+    if len(contents) > settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(413, f"Files must be smaller than {settings.max_upload_mb} MB.")
+    extension = {"image/jpeg": ".jpg", "image/png": ".png", "application/pdf": ".pdf"}[file.content_type]
+    path = UPLOADS / f"answer-key-{uuid.uuid4()}{extension}"
+    path.write_bytes(contents)
+    try:
+        pages = normalize_pages(path, file.content_type)
+        result = await import_answer_key_pages([(page["processed_key"], "image/jpeg") for page in pages], [number.strip() for number in numbers])
+    finally:
+        path.unlink(missing_ok=True)
+    expected = {normalized_question_number(number): number.strip() for number in numbers}
+    answers = []
+    warnings = list(result.warnings)
+    for answer in result.answers:
+        matched = expected.get(normalized_question_number(answer.question_number))
+        if not matched:
+            warnings.append(f"Could not match answer-key entry '{answer.question_number}' to an exam question.")
+            continue
+        answers.append({**answer.model_dump(), "question_number": matched})
+    return {"answers": answers, "warnings": list(dict.fromkeys(warnings))}
 
 
 @app.get("/api/exams")
@@ -1174,7 +1232,7 @@ def get_submission(submission_id: str, teacher: dict = Depends(current_teacher))
         for ev, criterion, question in db.execute(select(CriterionEvaluation, RubricCriterion, Question).select_from(CriterionEvaluation).join(RubricCriterion, CriterionEvaluation.criterion_id == RubricCriterion.id).join(Question, RubricCriterion.question_id == Question.id).join(Answer, CriterionEvaluation.answer_id == Answer.id).where(Answer.submission_id == submission_id).order_by(Question.number)):
             pending = db.scalar(select(ReviewSuggestion).where(ReviewSuggestion.evaluation_id == ev.id, ReviewSuggestion.status == "pending").order_by(ReviewSuggestion.created_at.desc()))
             evaluations.append({"id": ev.id, "ai_marks": ev.ai_marks, "teacher_marks": ev.teacher_marks, "reason": ev.reason, "confidence": ev.confidence, "needs_review": ev.needs_review, "review_severity": ev.review_severity, "review_resolved": ev.review_resolved, "review_resolution": ev.review_resolution, "criterion_title": criterion.title, "criterion_description": criterion.description, "max_marks": criterion.max_marks, "concept": criterion.concept_tags[0] if criterion.concept_tags else "Uncategorized", "question_id": question.id, "question_number": question.number, "question_text": question.text, "evidence": [{"page_id": evidence.page_id, "page": p.page_number if (p := db.get(SubmissionPage, evidence.page_id)) else None, "quote": evidence.quote} for evidence in db.scalars(select(EvaluationEvidence).where(EvaluationEvidence.evaluation_id == ev.id))], "pending_review": {"id": pending.id, "suggested_marks": pending.suggested_marks, "reason": pending.reason, "confidence": pending.confidence} if pending else None, "effective_marks": ev.teacher_marks if ev.teacher_marks is not None else ev.ai_marks})
-        return {"id": submission.id, "exam_id": submission.exam_id, "student_id": submission.student_id, "status": submission.status.value, "total_score": submission.total_score, "created_at": submission.created_at, "error": submission.error, "student_name": student.name, "exam_title": exam.title, "released_at": submission.released_at, "pages": pages, "answers": answers, "evaluations": evaluations}
+        return {"id": submission.id, "exam_id": submission.exam_id, "student_id": submission.student_id, "status": submission.status.value, "total_score": submission.total_score, "total_marks": exam.total_marks, "created_at": submission.created_at, "error": submission.error, "student_name": student.name, "exam_title": exam.title, "released_at": submission.released_at, "pages": pages, "answers": answers, "evaluations": evaluations}
 
 
 @app.patch("/api/submissions/{submission_id}/release")
@@ -1329,7 +1387,7 @@ async def request_review(evaluation_id: str, payload: ReviewInput, teacher: dict
             raise HTTPException(409, "A PRISM suggestion is already awaiting your decision.")
         current_marks = evaluation.teacher_marks if evaluation.teacher_marks is not None else evaluation.ai_marks
         _, question_pages, transcription = question_material(db, answer.submission_id, question.id)
-        result = await review_criterion(question_pages, question.text, criterion_data(criterion), transcription, current_marks, evaluation.reason, payload.comment)
+        result = await review_criterion(question_pages, question.text, criterion_data(criterion), transcription, current_marks, evaluation.reason, payload.comment, question.answer_key)
         review = ReviewSuggestion(evaluation_id=evaluation.id, requested_by_teacher_id=teacher["id"], comment=payload.comment, suggested_marks=min(criterion.max_marks, max(0, result.suggested_marks)), reason=result.reason, evidence_quotes=result.evidence_quotes, confidence=result.confidence)
         db.add(review); db.commit()
         return {"id": review.id, "previous_marks": current_marks, "suggested_marks": review.suggested_marks, "reason": review.reason, "evidence": review.evidence_quotes, "confidence": review.confidence, "status": review.status}

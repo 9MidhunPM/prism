@@ -265,7 +265,7 @@ export default function SubmissionPage({
               {submission.student_name}
             </h1>
             <p className="mt-2 text-sm text-[var(--ink-muted)]">
-              {submission.exam_title} · {submission.total_score} marks
+              {submission.exam_title} · {submission.total_score}/{submission.total_marks} marks
             </p>
           </div>
           <span

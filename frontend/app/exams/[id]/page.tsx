@@ -52,6 +52,7 @@ export default function ExamPage({
       id: string;
       student_name: string;
       total_score: number;
+      total_marks: number;
       created_at: string;
     }[]
   >([]);
@@ -633,7 +634,7 @@ export default function ExamPage({
                       {new Date(item.created_at).toLocaleDateString()}
                     </span>
                   </span>
-                  <span className="font-mono">{item.total_score}</span>
+                  <span className="font-mono">{item.total_score}/{item.total_marks}</span>
                 </Link>
               ))
             ) : (

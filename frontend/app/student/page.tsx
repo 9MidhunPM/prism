@@ -18,6 +18,7 @@ type Submission = {
   subject: string;
   status: string;
   total_score: number;
+  total_marks: number;
   created_at: string;
   evaluations: {
     id: string;
@@ -145,7 +146,7 @@ export default function StudentPortal() {
                         </span>
                         <span className="text-right">
                           <strong className="block font-mono">
-                            {submission.total_score}
+                            {submission.total_score}/{submission.total_marks}
                           </strong>
                           <span className="text-xs uppercase tracking-wide text-[#52705b]">
                             {statusLabel(submission.status)}
@@ -214,7 +215,7 @@ function Result({ result }: { result: Submission | null }) {
       <div className="border-b border-[var(--line)] p-5">
         <p className="text-sm text-[var(--ink-muted)]">{result.exam_title}</p>
         <h2 className="font-serif text-2xl font-semibold">
-          {result.total_score} marks
+          {result.total_score}/{result.total_marks} marks
         </h2>
       </div>
       <div className="divide-y divide-[var(--line)]">

@@ -16,6 +16,7 @@ type Criterion = {
 type Question = {
   number: string;
   text: string;
+  answer_key: string;
   visible_max_marks?: string;
   criteria: Criterion[];
 };
@@ -29,6 +30,7 @@ const blankCriterion = (): Criterion => ({
 const blankQuestion = (number: number): Question => ({
   number: `Q${number}`,
   text: "",
+  answer_key: "",
   criteria: [blankCriterion()],
 });
 
@@ -66,7 +68,7 @@ export default function NewExamPage() {
 
   const updateQuestion = (
     index: number,
-    field: "number" | "text" | "visible_max_marks",
+    field: "number" | "text" | "answer_key" | "visible_max_marks",
     value: string,
   ) =>
     setQuestions((items) =>
@@ -152,6 +154,7 @@ export default function NewExamPage() {
         draft.questions.map((question: any) => ({
           number: question.number,
           text: question.text,
+          answer_key: "",
           visible_max_marks:
             question.max_marks == null ? "" : String(question.max_marks),
           criteria: question.criteria.map((criterion: any) => ({
@@ -169,6 +172,28 @@ export default function NewExamPage() {
           ? reason.message
           : "The question paper could not be imported.",
       );
+    } finally {
+      setImporting(false);
+    }
+  }
+  async function importAnswerKey(file: File | undefined) {
+    if (!file) return;
+    if (!questions.every((question) => question.number.trim())) {
+      setImportError("Add a number to every question before importing an answer key.");
+      return;
+    }
+    setImportError("");
+    setImporting(true);
+    const form = new FormData();
+    form.set("file", file);
+    form.set("question_numbers", JSON.stringify(questions.map((question) => question.number)));
+    try {
+      const result = await api.request<{ answers: { question_number: string; answer_key: string }[]; warnings: string[] }>("/api/answer-keys/import", { method: "POST", body: form });
+      const imported = new Map(result.answers.map((answer) => [answer.question_number.trim().toUpperCase(), answer.answer_key]));
+      setQuestions((items) => items.map((question) => ({ ...question, answer_key: imported.get(question.number.trim().toUpperCase()) ?? question.answer_key })));
+      setImportWarnings((warnings) => [...warnings, ...(result.warnings ?? [])]);
+    } catch (reason) {
+      setImportError(reason instanceof Error ? reason.message : "The answer key could not be imported.");
     } finally {
       setImporting(false);
     }
@@ -333,6 +358,14 @@ export default function NewExamPage() {
             </div>
           )}
         </section>
+        <section className="surface-lined mb-6 p-5">
+          <h2 className="font-serif text-2xl font-semibold">Optional answer key</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--ink-muted)]">Upload a marking scheme to fill the per-question reference answers below. PRISM accepts equivalent student wording and uses the rubric as the scoring authority.</p>
+          <label className="button-secondary mt-4 cursor-pointer">
+            {importing ? "Reading answer key..." : "Upload answer key"}
+            <input className="sr-only" type="file" accept="image/jpeg,image/png,application/pdf" disabled={importing} onChange={(event) => { void importAnswerKey(event.target.files?.[0]); event.target.value = ""; }} />
+          </label>
+        </section>
         <section className="surface mb-6 grid gap-4 p-5 sm:grid-cols-3">
           <Field label="Exam title">
             <input
@@ -486,8 +519,17 @@ export default function NewExamPage() {
                     Remove
                   </button>
                 </div>
-              </div>
-              <div className="overflow-x-auto">
+               </div>
+               <Field label="Reference answer (optional)">
+                 <textarea
+                   name={`question-answer-key-${questionIndex}`}
+                   value={question.answer_key}
+                   onChange={(event) => updateQuestion(questionIndex, "answer_key", event.target.value)}
+                   className="input min-h-24"
+                   placeholder="An acceptable answer or method. Equivalent student wording is accepted."
+                 />
+               </Field>
+               <div className="overflow-x-auto">
                 <table className="w-full min-w-[650px] text-left text-sm">
                   <thead className="border-b border-[#172126]/10 text-[#667174]">
                     <tr>

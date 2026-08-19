@@ -11,6 +11,8 @@ type Submission = {
   exam_title: string;
   status: string;
   total_score: number;
+  total_marks: number;
+  reason?: string;
 };
 type Dashboard = {
   metrics: {
@@ -23,12 +25,7 @@ type Dashboard = {
     required_reviews: number;
     recommended_reviews: number;
   };
-  attention: {
-    name: string;
-    mastery: number;
-    required_reviews: number;
-    recommended_reviews: number;
-  }[];
+  review_papers: Submission[];
   submissions: Submission[];
 };
 
@@ -140,58 +137,26 @@ export default function Home() {
         <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,.85fr)]">
           <section className="surface-lined overflow-hidden">
             <div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4">
-              <h2 className="font-serif text-2xl font-semibold">
-                Concepts to revisit
-              </h2>
-              <Link href="/classes" className="button-quiet">
-                Class insights
+              <h2 className="font-serif text-2xl font-semibold">Papers to review</h2>
+              <Link href="/submissions" className="button-quiet">
+                All papers
               </Link>
             </div>
             <div className="divide-y divide-[var(--line)]">
-              {data?.attention.map((item) => (
-                <article
-                  key={item.name}
-                  className="grid gap-3 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_7rem_9rem] sm:items-center"
-                >
-                  <div>
-                    <h3 className="font-medium">{item.name}</h3>
-                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--surface-muted)]">
-                      <div
-                        className="h-full rounded-full bg-[var(--brand)]"
-                        style={{ width: `${item.mastery}%` }}
-                      />
-                    </div>
-                  </div>
-                  <p className="font-mono text-sm text-[var(--ink-muted)]">
-                    {item.mastery}% mastery
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {item.required_reviews > 0 && (
-                      <span className="status-pill status-danger">
-                        {item.required_reviews} required
-                      </span>
-                    )}
-                    {item.recommended_reviews > 0 && (
-                      <span className="status-pill status-review">
-                        {item.recommended_reviews} advised
-                      </span>
-                    )}
-                    {!item.required_reviews && !item.recommended_reviews && (
-                      <span className="text-sm text-[var(--ink-muted)]">
-                        No open signals
-                      </span>
-                    )}
-                  </div>
-                </article>
+              {data?.review_papers.map((item) => (
+                <Link key={item.id} href={`/submissions/${item.id}`} className="flex items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-[var(--surface-muted)]">
+                  <span className="min-w-0"><strong className="block truncate">{item.student_name} · {item.exam_title}</strong><span className="mt-1 block text-sm text-[var(--review)]">{item.reason}</span></span>
+                  <span className="shrink-0 text-right font-mono text-sm">{item.total_score.toFixed(1)}/{item.total_marks}</span>
+                </Link>
               ))}
-              {data && data.attention.length === 0 && (
+              {data && data.review_papers.length === 0 && (
                 <p className="p-5 text-sm text-[var(--ink-muted)]">
-                  Concept patterns will appear after PRISM evaluates papers.
+                  No papers currently need teacher attention.
                 </p>
               )}
               {!data && (
                 <p className="p-5 text-sm text-[var(--ink-muted)]">
-                  Loading concept evidence...
+                  Loading papers that need review...
                 </p>
               )}
             </div>
@@ -222,7 +187,7 @@ export default function Home() {
                 </span>
                 <span className="shrink-0 text-right">
                   <strong className="block font-mono text-sm">
-                    {item.total_score.toFixed(1)}
+                      {item.total_score.toFixed(1)}/{item.total_marks}
                   </strong>
                   <span
                     className={`status-pill mt-1 ${statusClass(item.status)}`}
