@@ -4,7 +4,6 @@ import hashlib
 import hmac
 import io
 import json
-import shutil
 import threading
 import time
 import uuid
@@ -249,10 +248,6 @@ class PasswordChangeInput(BaseModel):
 
 class ReleaseInput(BaseModel):
     released: bool
-
-
-class ProductionCleanupInput(BaseModel):
-    confirmation: Literal["DELETE_ALL_NON_TEACHER_DATA"]
 
 
 class DrivePreviewInput(BaseModel):
@@ -696,7 +691,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list, allow_origin_regex=r"http://localhost:\d+" if settings.app_env != "production" else None, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"], allow_headers=["Content-Type", "X-CSRF-Token"], allow_credentials=True)
+app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list, allow_origin_regex=r"http://localhost:\d+" if not settings.is_production else None, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"], allow_headers=["Content-Type", "X-CSRF-Token"], allow_credentials=True)
 
 
 @app.middleware("http")
@@ -760,57 +755,9 @@ def readiness():
         raise HTTPException(503, "Database is unavailable.") from exc
 
 
-@app.post("/api/maintenance/cleanup-non-teacher-data")
-def cleanup_non_teacher_data(payload: ProductionCleanupInput, teacher: dict = Depends(current_teacher)):
-    """One-time cleanup for the initial production launch; remove after execution."""
-    if payload.confirmation != "DELETE_ALL_NON_TEACHER_DATA":
-        raise HTTPException(422, "Cleanup confirmation is invalid.")
-    deleted: dict[str, int] = {}
-    tables = (
-        "evaluation_evidence",
-        "review_suggestions",
-        "teacher_overrides",
-        "evidence_regions",
-        "criterion_evaluations",
-        "ai_artifacts",
-        "answers",
-        "processing_jobs",
-        "submission_pages",
-        "drive_import_items",
-        "submissions",
-        "drive_import_batches",
-        "rubric_criteria",
-        "questions",
-        "exams",
-        "class_memberships",
-        "auth_sessions",
-        "accounts",
-        "students",
-        "classes",
-    )
-    with session() as db:
-        for table in tables:
-            statement = f"DELETE FROM {table}"
-            if table == "accounts":
-                statement += " WHERE teacher_id IS NULL OR student_id IS NOT NULL"
-            result = db.execute(text(statement))
-            deleted[table] = result.rowcount
-        db.commit()
-    media_deleted = 0
-    if UPLOADS.exists():
-        for path in UPLOADS.iterdir():
-            if path.is_dir():
-                shutil.rmtree(path)
-            else:
-                path.unlink(missing_ok=True)
-            media_deleted += 1
-    deleted["media_entries"] = media_deleted
-    return {"status": "cleaned", "preserved_teacher_id": teacher["id"], "deleted": deleted}
-
-
 @app.post("/api/auth/bootstrap", status_code=201)
 def bootstrap_teacher(payload: TeacherCredentials, response: Response, bootstrap_token: str | None = Header(default=None, alias="X-Bootstrap-Token")):
-    if settings.app_env == "production":
+    if settings.is_production:
         if not settings.enable_http_bootstrap:
             raise HTTPException(403, "HTTP bootstrap is disabled.")
         if not settings.bootstrap_token or not bootstrap_token or token_hash(bootstrap_token) != token_hash(settings.bootstrap_token.get_secret_value()):

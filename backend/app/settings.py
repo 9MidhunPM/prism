@@ -87,8 +87,13 @@ class Settings(BaseSettings):
     def google_drive_enabled(self) -> bool:
         return bool(self.google_drive_client_id)
 
+    @property
+    def is_production(self) -> bool:
+        """Treat an HTTPS PostgreSQL deployment as production even if APP_ENV is stale."""
+        return self.app_env == "production" or (self.app_env == "development" and self.app_url.startswith("https://") and self.database_url.startswith("postgresql+"))
+
     def validate_production(self) -> None:
-        if self.app_env != "production":
+        if not self.is_production:
             return
         if self.session_secret.get_secret_value() == "development-only-secret":
             raise ValueError("SESSION_SECRET must be set in production")
