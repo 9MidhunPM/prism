@@ -758,10 +758,7 @@ def readiness():
 @app.post("/api/auth/bootstrap", status_code=201)
 def bootstrap_teacher(payload: TeacherCredentials, response: Response, bootstrap_token: str | None = Header(default=None, alias="X-Bootstrap-Token")):
     if settings.is_production:
-        if not settings.enable_http_bootstrap:
-            raise HTTPException(403, "HTTP bootstrap is disabled.")
-        if not settings.bootstrap_token or not bootstrap_token or token_hash(bootstrap_token) != token_hash(settings.bootstrap_token.get_secret_value()):
-            raise HTTPException(403, "Invalid bootstrap token.")
+        raise HTTPException(403, "Teacher account creation is disabled in production.")
     if not payload.name: raise HTTPException(422, "A teacher name is required.")
     with session() as db:
         if db.scalar(select(Teacher.id).limit(1)): raise HTTPException(403, "Teacher setup is already complete. Sign in instead.")

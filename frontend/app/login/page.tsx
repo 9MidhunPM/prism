@@ -9,8 +9,6 @@ import { api } from "@/lib/api";
 export default function LoginPage() {
   const router = useRouter();
   const { refresh } = useSession();
-  const [mode, setMode] = useState<"login" | "setup">("login");
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -21,11 +19,7 @@ export default function LoginPage() {
     setSaving(true);
     setError("");
     try {
-      await api.post(`/api/auth/${mode === "setup" ? "bootstrap" : "login"}`, {
-        name: mode === "setup" ? name : undefined,
-        email,
-        password,
-      });
+      await api.post("/api/auth/login", { email, password });
       const account = await refresh();
       if (!account) throw new Error("Your session could not be verified.");
       router.replace(account.role === "student" ? "/student" : "/");
@@ -51,26 +45,12 @@ export default function LoginPage() {
           PRISM
         </Link>
         <h1 className="mt-7 font-serif text-4xl font-semibold tracking-[-0.035em]">
-          {mode === "setup" ? "Set up your account" : "Welcome back"}
+          Welcome back
         </h1>
         <p className="mt-3 text-sm leading-6 text-[var(--ink-muted)]">
-          {mode === "setup"
-            ? "Create the first teacher account for this PRISM workspace."
-            : "Sign in to manage examinations and review evidence."}
+          Sign in to manage examinations and review evidence.
         </p>
         <form onSubmit={submit} className="mt-6 space-y-4">
-          {mode === "setup" && (
-            <label className="block text-sm font-medium">
-              Name
-              <input
-                required
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                className="input mt-1 w-full"
-                autoComplete="name"
-              />
-            </label>
-          )}
           <label className="block text-sm font-medium">
             Email
             <input
@@ -91,9 +71,7 @@ export default function LoginPage() {
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               className="input mt-1 w-full"
-              autoComplete={
-                mode === "setup" ? "new-password" : "current-password"
-              }
+              autoComplete="current-password"
             />
           </label>
           {error && (
@@ -106,25 +84,9 @@ export default function LoginPage() {
             type="submit"
             className="button-primary w-full py-3"
           >
-            {saving
-              ? "Please wait"
-              : mode === "setup"
-                ? "Create teacher account"
-                : "Sign in"}
+            {saving ? "Please wait" : "Sign in"}
           </button>
         </form>
-        <button
-          type="button"
-          onClick={() => {
-            setMode(mode === "setup" ? "login" : "setup");
-            setError("");
-          }}
-          className="button-quiet mt-5 -ml-2"
-        >
-          {mode === "setup"
-            ? "Already have an account? Sign in"
-            : "First teacher? Set up the workspace"}
-        </button>
       </section>
     </main>
   );
