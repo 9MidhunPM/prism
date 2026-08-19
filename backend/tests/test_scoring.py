@@ -8,10 +8,10 @@ from starlette.datastructures import Headers
 
 from app.main import complete_review, create_exam, delete_exam, drive_page_order, page_source, perception_input_hash, question_material, recalculate_submission_state, resolve_question, ExamInput, QuestionInput, CriterionInput, start_processing, upload_submission
 from app.models import (AIArtifact, Answer, ClassCohort, CriterionEvaluation,
-                        EvaluationEvidence, EvidenceRegion, Exam, ProcessingJob,
-                        Question, ReviewSuggestion, RubricCriterion, Student,
-                        Submission, SubmissionPage, SubmissionStatus, Teacher,
-                        TeacherOverride)
+                        DriveImportBatch, DriveImportItem, EvaluationEvidence,
+                        EvidenceRegion, Exam, ProcessingJob, Question,
+                        ReviewSuggestion, RubricCriterion, Student, Submission,
+                        SubmissionPage, SubmissionStatus, Teacher, TeacherOverride)
 from app import database
 
 
@@ -137,9 +137,17 @@ def test_delete_exam_removes_dependent_records_in_foreign_key_order(isolated_dat
     teacher = teacher_id()
     exam = exam_for(teacher)
     evaluation_tree(teacher, exam["id"])
+    with database.SessionLocal() as db:
+        batch = DriveImportBatch(teacher_id=teacher, exam_id=exam["id"], root_folder_id="drive-root")
+        db.add(batch)
+        db.flush()
+        db.add(DriveImportItem(batch_id=batch.id, folder_id="student-folder", folder_name="Student", pages=[]))
+        db.commit()
     assert delete_exam(exam["id"], teacher={"id": teacher})["deleted"] is True
     with database.SessionLocal() as db:
         assert db.query(Exam).count() == 0
+        assert db.query(DriveImportBatch).count() == 0
+        assert db.query(DriveImportItem).count() == 0
         assert db.query(Submission).count() == 0
         assert db.query(SubmissionPage).count() == 0
         assert db.query(Answer).count() == 0

@@ -1327,6 +1327,13 @@ def delete_exam(exam_id: str, teacher: dict = Depends(current_teacher)):
         if active_submission:
             raise HTTPException(409, "Wait for active paper processing to finish before deleting this exam.")
         paths: set[str] = set()
+        batches = db.scalars(select(DriveImportBatch).where(DriveImportBatch.exam_id == exam.id)).all()
+        for batch in batches:
+            for item in db.scalars(select(DriveImportItem).where(DriveImportItem.batch_id == batch.id)):
+                db.delete(item)
+            db.flush()
+            db.delete(batch)
+        db.flush()
         for submission in db.scalars(select(Submission).where(Submission.exam_id == exam.id)).all():
             paths.update(delete_submission_data(db, submission))
         for criterion in db.scalars(select(RubricCriterion).join(Question).where(Question.exam_id == exam.id)):
