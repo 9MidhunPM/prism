@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import io
 import json
+import shutil
 import threading
 import time
 import uuid
@@ -39,6 +40,7 @@ settings = get_settings()
 UPLOADS = settings.upload_root
 MODEL = settings.openai_model
 REVIEW_THRESHOLD = settings.ai_review_threshold
+EXPECTED_SCHEMA_REVISION = "0016_production_hardening"
 ALLOWED_TYPES = {"image/jpeg", "image/png", "application/pdf"}
 ACTIVE_PROCESSING_STAGES = {
     SubmissionStatus.UPLOADED,
@@ -247,6 +249,10 @@ class PasswordChangeInput(BaseModel):
 
 class ReleaseInput(BaseModel):
     released: bool
+
+
+class ProductionCleanupInput(BaseModel):
+    confirmation: Literal["DELETE_ALL_NON_TEACHER_DATA"]
 
 
 class DrivePreviewInput(BaseModel):
@@ -743,9 +749,63 @@ def readiness():
     try:
         with session() as db:
             db.execute(text("SELECT 1"))
+            if settings.app_env != "test":
+                revision = db.scalar(text("SELECT version_num FROM alembic_version"))
+                if revision != EXPECTED_SCHEMA_REVISION:
+                    raise HTTPException(503, "Database schema migration is incomplete.")
         return {"status": "ready"}
     except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
         raise HTTPException(503, "Database is unavailable.") from exc
+
+
+@app.post("/api/maintenance/cleanup-non-teacher-data")
+def cleanup_non_teacher_data(payload: ProductionCleanupInput, teacher: dict = Depends(current_teacher)):
+    """One-time cleanup for the initial production launch; remove after execution."""
+    if payload.confirmation != "DELETE_ALL_NON_TEACHER_DATA":
+        raise HTTPException(422, "Cleanup confirmation is invalid.")
+    deleted: dict[str, int] = {}
+    tables = (
+        "evaluation_evidence",
+        "review_suggestions",
+        "teacher_overrides",
+        "evidence_regions",
+        "criterion_evaluations",
+        "ai_artifacts",
+        "answers",
+        "processing_jobs",
+        "submission_pages",
+        "drive_import_items",
+        "submissions",
+        "drive_import_batches",
+        "rubric_criteria",
+        "questions",
+        "exams",
+        "class_memberships",
+        "auth_sessions",
+        "accounts",
+        "students",
+        "classes",
+    )
+    with session() as db:
+        for table in tables:
+            statement = f"DELETE FROM {table}"
+            if table == "accounts":
+                statement += " WHERE teacher_id IS NULL OR student_id IS NOT NULL"
+            result = db.execute(text(statement))
+            deleted[table] = result.rowcount
+        db.commit()
+    media_deleted = 0
+    if UPLOADS.exists():
+        for path in UPLOADS.iterdir():
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink(missing_ok=True)
+            media_deleted += 1
+    deleted["media_entries"] = media_deleted
+    return {"status": "cleaned", "preserved_teacher_id": teacher["id"], "deleted": deleted}
 
 
 @app.post("/api/auth/bootstrap", status_code=201)
