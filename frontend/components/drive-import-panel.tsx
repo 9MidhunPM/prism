@@ -24,6 +24,7 @@ const clientId = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_CLIENT_ID;
 const apiKey = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_API_KEY;
 const appId = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_APP_ID;
 const driveScope = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_SCOPE ?? "https://www.googleapis.com/auth/drive.readonly";
+const NEW_STUDENT = "__new_student__";
 
 function loadScript(src: string) {
   return new Promise<void>((resolve, reject) => {
@@ -69,6 +70,7 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
   const [batchId, setBatchId] = useState("");
   const [items, setItems] = useState<DriveItem[]>([]);
   const [assignments, setAssignments] = useState<Record<string, string>>({});
+  const [newStudentNames, setNewStudentNames] = useState<Record<string, string>>({});
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const pickerRef = useRef<any>(null);
@@ -170,7 +172,11 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
       setBatchId(result.id);
       setItems(result.items);
       setAssignments(result.items.reduce<Record<string, string>>((current, item) => {
-        if (item.student_id) current[item.folder_id] = item.student_id;
+        current[item.folder_id] = item.student_id ?? NEW_STUDENT;
+        return current;
+      }, {}));
+      setNewStudentNames(result.items.reduce<Record<string, string>>((current, item) => {
+        current[item.folder_id] = item.folder_name;
         return current;
       }, {}));
       setStatus("Review the matches, then import the confirmed papers.");
@@ -183,7 +189,11 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
   async function commit() {
     setStatus("Importing papers...");
     try {
-      await api.post(`/api/imports/${batchId}/commit`, { access_token: token, assignments });
+      const existingAssignments = Object.fromEntries(Object.entries(assignments).filter(([, value]) => value !== NEW_STUDENT));
+      const newNames = Object.fromEntries(Object.entries(assignments)
+        .filter(([, value]) => value === NEW_STUDENT)
+        .map(([folderId]) => [folderId, newStudentNames[folderId] ?? ""]));
+      await api.post(`/api/imports/${batchId}/commit`, { access_token: token, assignments: existingAssignments, new_student_names: newNames });
       setStatus("Papers imported. Processing has started.");
       setItems((current) => current.map((item) => ({ ...item, status: "imported" })));
     } catch (reason) {
@@ -209,17 +219,21 @@ export function DriveImportPanel({ examId, roster }: { examId: string; roster: R
         {status && <p className="text-sm text-[var(--ink-muted)]">{status}</p>}
         {!items.length && !error && <p className="text-xs text-[var(--ink-muted)]">Expected structure: `Students / Student Name / 1.jpeg, 2.jpeg`.</p>}
         {items.length > 0 && <>
-          <div className="divide-y divide-[var(--line)] rounded-lg border border-[var(--line)] bg-[var(--surface)]">
-            {items.map((item) => <div key={item.folder_id} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
-              <div><strong>{item.folder_name}</strong><p className="text-xs text-[var(--ink-muted)]">{item.pages.length} pages · {item.error ?? item.status}</p></div>
-              <select aria-label={`Assign ${item.folder_name}`} value={assignments[item.folder_id] ?? ""} onChange={(event) => setAssignments((current) => ({ ...current, [item.folder_id]: event.target.value }))} className="input sm:max-w-xs">
-                <option value="">Choose student</option>
-                {roster.map((student) => <option key={student.id} value={student.id}>{student.name} ({student.identifier})</option>)}
-              </select>
-            </div>)}
-          </div>
-          <button type="button" className="button-primary mt-4" disabled={!batchId || items.some((item) => !assignments[item.folder_id] || !item.pages.length)} onClick={() => void commit()}>Import confirmed papers</button>
-        </>}
+           <div className="divide-y divide-[var(--line)] rounded-lg border border-[var(--line)] bg-[var(--surface)]">
+             {items.map((item) => <div key={item.folder_id} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
+               <div><strong>{item.folder_name}</strong><p className="text-xs text-[var(--ink-muted)]">{item.pages.length} pages · {item.error ?? item.status}</p></div>
+               <div className="flex w-full flex-col gap-2 sm:max-w-xs">
+                 <select aria-label={`Assign ${item.folder_name}`} value={assignments[item.folder_id] ?? ""} onChange={(event) => setAssignments((current) => ({ ...current, [item.folder_id]: event.target.value }))} className="input">
+                 <option value="">Choose student</option>
+                 {roster.map((student) => <option key={student.id} value={student.id}>{student.name} ({student.identifier})</option>)}
+                 <option value={NEW_STUDENT}>New student</option>
+                 </select>
+                 {assignments[item.folder_id] === NEW_STUDENT && <input aria-label={`New student name for ${item.folder_name}`} className="input" value={newStudentNames[item.folder_id] ?? item.folder_name} onChange={(event) => setNewStudentNames((current) => ({ ...current, [item.folder_id]: event.target.value }))} placeholder={item.folder_name} />}
+               </div>
+             </div>)}
+           </div>
+           <button type="button" className="button-primary mt-4" disabled={!batchId || items.some((item) => !assignments[item.folder_id] || (assignments[item.folder_id] === NEW_STUDENT && (newStudentNames[item.folder_id] ?? item.folder_name).trim().length < 2) || !item.pages.length)} onClick={() => void commit()}>Import confirmed papers</button>
+         </>}
       </div>}
     </section>
   );

@@ -257,6 +257,7 @@ class DrivePreviewInput(BaseModel):
 class DriveCommitInput(BaseModel):
     access_token: str = Field(min_length=20, max_length=4096)
     assignments: dict[str, str] = {}
+    new_student_names: dict[str, str] = {}
 
 
 def imported_draft(result) -> dict:
@@ -1231,7 +1232,10 @@ async def commit_drive_import(batch_id: str, payload: DriveCommitInput, backgrou
     async with httpx.AsyncClient(timeout=60) as client:
         for item in items:
             student_id = payload.assignments.get(item["folder_id"], item["student_id"])
-            if not student_id or not item["pages"] or len(item["pages"]) > settings.max_submission_pages:
+            student_name = payload.new_student_names.get(item["folder_id"], "").strip()
+            if not student_id and len(student_name) < 2:
+                student_name = ""
+            if (not student_id and not student_name) or not item["pages"] or len(item["pages"]) > settings.max_submission_pages:
                 with session() as db:
                     stored = db.get(DriveImportItem, item["id"]); stored.status = "skipped"; stored.error = "Assign a student and provide up to the maximum number of pages."; db.commit()
                 continue
@@ -1246,7 +1250,7 @@ async def commit_drive_import(batch_id: str, payload: DriveCommitInput, backgrou
                     stored = db.get(DriveImportItem, item["id"]); stored.status = "failed"; stored.error = "A Drive page could not be downloaded."; db.commit()
                 continue
             try:
-                result = await upload_submission(background_tasks, exam.id, pages=uploads, student_id=student_id, teacher=teacher)
+                result = await upload_submission(background_tasks, exam.id, pages=uploads, student_name=student_name, student_id=student_id, teacher=teacher)
             except HTTPException as exc:
                 with session() as db:
                     stored = db.get(DriveImportItem, item["id"]); stored.status = "failed"; stored.error = exc.detail; db.commit()
