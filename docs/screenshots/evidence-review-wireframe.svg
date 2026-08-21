@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="820" viewBox="0 0 1400 820" role="img" aria-labelledby="title desc">
+  <title id="title">Illustrative PRISM evidence review wireframe</title>
+  <desc id="desc">A neutral wireframe showing a paper viewer beside criterion evidence and teacher review controls.</desc>
+  <rect width="1400" height="820" fill="#eef2f3"/>
+  <rect x="42" y="28" width="1316" height="764" rx="18" fill="#ffffff" stroke="#c9d4d7"/>
+  <rect x="42" y="28" width="1316" height="68" rx="18" fill="#0f5864"/>
+  <text x="76" y="71" fill="#ffffff" font-family="Arial, sans-serif" font-size="28" font-weight="700">PRISM</text>
+  <text x="1160" y="69" fill="#dcebed" font-family="Arial, sans-serif" font-size="16">Assessment review</text>
+  <rect x="76" y="128" width="600" height="612" rx="14" fill="#f4f1e9" stroke="#d2d5ca"/>
+  <text x="106" y="172" fill="#19343b" font-family="Arial, sans-serif" font-size="22" font-weight="700">Original paper · page 2</text>
+  <rect x="130" y="210" width="490" height="470" fill="#fffdf7" stroke="#d8d6cd"/>
+  <text x="165" y="266" fill="#455b61" font-family="Georgia, serif" font-size="22">Q3. Explain the process.</text>
+  <path d="M165 315 C260 285 310 355 420 320 S520 305 570 340" fill="none" stroke="#536c75" stroke-width="5"/>
+  <path d="M165 368 C240 340 350 400 520 370" fill="none" stroke="#536c75" stroke-width="5"/>
+  <rect x="150" y="430" width="420" height="90" rx="10" fill="#d8eef0" stroke="#0f8994" stroke-width="3"/>
+  <text x="174" y="470" fill="#0f5864" font-family="Arial, sans-serif" font-size="18">Approximate evidence region</text>
+  <text x="174" y="499" fill="#38646c" font-family="Arial, sans-serif" font-size="15">page reference retained with the criterion</text>
+  <rect x="708" y="128" width="614" height="612" rx="14" fill="#ffffff" stroke="#d2dfe1"/>
+  <text x="742" y="172" fill="#19343b" font-family="Arial, sans-serif" font-size="22" font-weight="700">Q3 · Criterion C2</text>
+  <text x="742" y="208" fill="#596e74" font-family="Arial, sans-serif" font-size="16">Explains the direction of the process</text>
+  <rect x="742" y="242" width="540" height="70" rx="10" fill="#e7f3ec"/>
+  <text x="766" y="272" fill="#276c49" font-family="Arial, sans-serif" font-size="17" font-weight="700">Suggested mark</text>
+  <text x="1202" y="281" fill="#276c49" font-family="Arial, sans-serif" font-size="28" font-weight="700">1 / 2</text>
+  <text x="742" y="350" fill="#19343b" font-family="Arial, sans-serif" font-size="17" font-weight="700">Reason</text>
+  <text x="742" y="382" fill="#52676d" font-family="Arial, sans-serif" font-size="16">The answer identifies the process but omits</text>
+  <text x="742" y="407" fill="#52676d" font-family="Arial, sans-serif" font-size="16">the direction shown in the rubric.</text>
+  <text x="742" y="458" fill="#19343b" font-family="Arial, sans-serif" font-size="17" font-weight="700">Evidence</text>
+  <rect x="742" y="478" width="540" height="76" rx="10" fill="#f3f6f7"/>
+  <text x="764" y="512" fill="#294a53" font-family="Arial, sans-serif" font-size="16">“[transcription quote from the answer]”</text>
+  <text x="764" y="538" fill="#6b7e83" font-family="Arial, sans-serif" font-size="14">Page 2 · model confidence 0.78 · review recommended</text>
+  <rect x="742" y="596" width="170" height="46" rx="9" fill="#0f5864"/>
+  <text x="782" y="625" fill="#ffffff" font-family="Arial, sans-serif" font-size="15" font-weight="700">Request review</text>
+  <rect x="930" y="596" width="150" height="46" rx="9" fill="#ffffff" stroke="#9fb3b7"/>
+  <text x="966" y="625" fill="#31545c" font-family="Arial, sans-serif" font-size="15" font-weight="700">Override</text>
+  <text x="742" y="694" fill="#71858a" font-family="Arial, sans-serif" font-size="14">Illustrative wireframe — not a runtime screenshot.</text>
+</svg>
