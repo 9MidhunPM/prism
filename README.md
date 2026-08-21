@@ -35,7 +35,9 @@ cd prism
 cp .env.example .env
 python3 -m venv backend/.venv
 backend/.venv/bin/pip install -r backend/requirements.txt
-backend/.venv/bin/python -m app.migrate
+cd backend
+.venv/bin/python -m app.migrate
+cd ..
 ```
 
 Run the API from `backend/`:
