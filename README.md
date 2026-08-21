@@ -58,7 +58,7 @@ Open [http://localhost:3000](http://localhost:3000). Create the first local teac
 ## Common Commands
 
 ```bash
-backend/.venv/bin/python -m pytest backend/tests
+(cd backend && .venv/bin/python -m pytest)
 npm --prefix frontend run lint
 npm --prefix frontend run build
 ```

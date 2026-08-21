@@ -7,7 +7,8 @@ PRISM currently has backend automated tests plus frontend lint and production-bu
 Create the backend environment as described in [local development](../guides/local-development.md), then run from the repository root:
 
 ```bash
-backend/.venv/bin/python -m pytest backend/tests
+cd backend
+.venv/bin/python -m pytest
 ```
 
 Tests use temporary SQLite databases and `Base.metadata.create_all()` unless a test explicitly exercises Alembic.
