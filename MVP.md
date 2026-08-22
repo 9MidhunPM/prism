@@ -62,14 +62,17 @@ operation with only the relevant context.
 
 ## 3. Hard reliability rules
 
-- The application runtime uses `gpt-5.6-luna` only.
+- Runtime model routing follows repository policy: perception/grading use
+  `gpt-5.6-luna`, review/import use `gpt-4o`, and teacher assistant prose uses
+  `gpt-4o-mini`.
 - Every model response maps to a typed schema or the operation fails safely.
 - No model-generated total is trusted.
 - `awarded_marks` is clamped or rejected if it cannot satisfy the criterion
   bounds; the stored result must never exceed `max_marks`.
 - Review suggestions never change a teacher mark automatically.
 - Original paper images remain available wherever evidence is shown.
-- Inference is bounded by a small concurrency limit and bounded retries.
+- OpenAI SDK calls use bounded timeout/retry settings. Processing is currently
+  sequential and runs in the API process; `AI_CONCURRENCY` is not active.
 - A cached completed submission is always available for a live demo fallback.
 
 ## 4. Recommended demo dataset
