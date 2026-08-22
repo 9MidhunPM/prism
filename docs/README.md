@@ -1,6 +1,21 @@
 # PRISM Documentation
 
-The documentation in this directory describes the behavior implemented in the current repository. Product planning and historical design decisions live in the root `PRD.md` and `MVP.md` files.
+This documentation describes the current implementation at the checked-out commit. Product planning and historical intent live in `PRD.md` and `MVP.md`; known source-versus-contract mismatches are listed in [Known gaps](known-gaps.md).
+
+## Start Here
+
+| Need | Read |
+| --- | --- |
+| Understand the product and boundaries | [Product overview](guides/product-overview.md) |
+| Understand the smallest complete demo | [MVP specification](../MVP.md) |
+| Install and configure the application | [Local development](guides/local-development.md) |
+| Understand code and data flow | [Architecture](reference/architecture.md) |
+| Follow a teacher through the product | [Teacher guide](guides/teacher-guide.md) |
+| Follow the student portal | [Student guide](guides/student-guide.md) |
+| Integrate with the API | [API reference](reference/api.md) |
+| Prepare a reliable presentation | [Demo runbook](demo-runbook.md) |
+| Operate a deployment | [Operations](operations.md) and [deployment runbook](operations/deployment.md) |
+| Check source-versus-contract mismatches | [Known gaps](known-gaps.md) |
 
 ## Product Guides
 
@@ -9,6 +24,7 @@ The documentation in this directory describes the behavior implemented in the cu
 - [Student guide](guides/student-guide.md): first sign-in, released results, and learning profile
 - [Local development](guides/local-development.md): prerequisites, setup, demo accounts, and commands
 - [Google Drive import](guides/google-drive-import.md): Cloud setup, folder structure, preview, and commit behavior
+- [Workflows](workflows.md): concise end-to-end teacher and student flow
 
 ## Engineering Reference
 
@@ -22,26 +38,28 @@ The documentation in this directory describes the behavior implemented in the cu
 
 ## Operations
 
+- [Operations overview](operations.md): compact operations and configuration reference
 - [Deployment](operations/deployment.md): container topology, migrations, health checks, and rollout
 - [Security and privacy](operations/security.md): authentication, CSRF, secrets, and educational-data constraints
 - [Backups and recovery](operations/backups-and-recovery.md): databases, media, restore checks, and job recovery
 - [Troubleshooting](operations/troubleshooting.md): common local and production failures
 
-## Screenshots
+## Demo And Visual Evidence
 
-Screenshots were captured from the hosted application with Playwright on August 21, 2026. They contain assessment data visible to the supplied demo teacher account, but no passwords, session cookies, CSRF tokens, OAuth tokens, or API keys.
+- [Demo runbook](demo-runbook.md): reliable presentation flow and fallback plan
+- [Screenshot guide](screenshots.md): how to capture sanitized product evidence
+- [Captured screenshots](assets/screenshots/): hosted product screens captured with Playwright
+- [Wireframes](screenshots/): illustrative future/demo visuals, not claims about rendered UI
 
-| Screen | Preview |
-| --- | --- |
-| Teacher workspace | [dashboard.png](assets/screenshots/dashboard.png) |
-| Exam catalogue | [exams.png](assets/screenshots/exams.png) |
-| Exam and upload workflow | [exam-detail.png](assets/screenshots/exam-detail.png) |
-| Evidence review workbench | [review-workbench.png](assets/screenshots/review-workbench.png) |
-| Exam analytics | [exam-insights.png](assets/screenshots/exam-insights.png) |
+Captured screenshots were taken from the hosted application with Playwright on August 21, 2026. They contain assessment data visible to the supplied demo teacher account, but no passwords, session cookies, CSRF tokens, OAuth tokens, or API keys.
 
-## Documentation Rules
+## Documentation Contract
 
 - Describe current code as fact; label proposed work explicitly.
 - Never place production credentials or private student data in documentation.
-- Recheck commands, endpoint names, prompt versions, and environment variables when behavior changes.
-- Update the relevant guide in the same change as a user-facing or operational change.
+- Examples use placeholders such as `teacher@example.com`; never copy real credentials into this repository.
+- If a deployed environment differs from source, record URL, commit SHA, and observation date.
+- AI output is a suggestion; a teacher owns the final mark.
+- Numeric totals, percentages, mastery values, and review rates are calculated by application code.
+- Source paper images are evidence; transcription is an aid and may be uncertain.
+- Recheck commands, endpoint names, prompt versions, environment variables, and screenshots when behavior changes.

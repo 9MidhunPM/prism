@@ -17,13 +17,16 @@ PRISM turns scanned handwritten exam papers into evidence-linked, teacher-contro
 | Start here | Purpose |
 | --- | --- |
 | [Documentation index](docs/README.md) | Navigate every guide and reference |
-| [Local development](docs/guides/local-development.md) | Run the API and web app locally |
+| [Product overview](docs/guides/product-overview.md) | Product scope, roles, and boundaries |
 | [Teacher guide](docs/guides/teacher-guide.md) | Complete the assessment workflow |
+| [Local development](docs/guides/local-development.md) | Run the API and web app locally |
 | [Architecture](docs/reference/architecture.md) | Understand components, data, and request flow |
-| [API reference](docs/reference/api.md) | Find the implemented HTTP endpoints |
-| [Deployment](docs/operations/deployment.md) | Configure and operate production |
+| [API reference](docs/reference/api.md) | Find implemented HTTP endpoints |
+| [Operations](docs/operations.md) | Concise deployment and demo operations |
+| [Deployment runbook](docs/operations/deployment.md) | Configure and operate production |
+| [Known gaps](docs/known-gaps.md) | Track source-versus-contract issues |
 
-Planning documents remain available in [PRD.md](PRD.md) and [MVP.md](MVP.md). They describe product intent and may include capabilities that are not implemented. The `docs/` directory describes the current codebase.
+Planning documents remain available in [PRD.md](PRD.md) and [MVP.md](MVP.md). They describe product intent and may include capabilities that are not implemented. The `docs/` directory describes the current codebase and operational behavior.
 
 ## Getting Started
 
@@ -43,12 +46,14 @@ cd ..
 Run the API from `backend/`:
 
 ```bash
+cd backend
 .venv/bin/uvicorn app.main:app --reload
 ```
 
 Run the web app in a second terminal from `frontend/`:
 
 ```bash
+cd frontend
 npm ci
 npm run dev
 ```
@@ -59,9 +64,8 @@ Open [http://localhost:3000](http://localhost:3000). Create the first local teac
 
 ```bash
 (cd backend && .venv/bin/python -m pytest)
-npm --prefix frontend run lint
-npm --prefix frontend run build
-```
+
+The frontend build currently passes. Biome lint reports existing application-source findings; see [testing](docs/reference/testing.md) and [known gaps](docs/known-gaps.md).
 
 ## Tech Stack
 
