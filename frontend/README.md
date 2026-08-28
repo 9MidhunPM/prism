@@ -107,6 +107,13 @@ npm run build
 
 No frontend unit or end-to-end suite is currently committed. Use the repository [testing guide](../docs/reference/testing.md) for the manual browser smoke test and known coverage gaps.
 
+When running from the repository root, use:
+
+```bash
+npm --prefix frontend run lint
+npm --prefix frontend run build
+```
+
 ## Documentation
 
 - [Local development](../docs/guides/local-development.md)

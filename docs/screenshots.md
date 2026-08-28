@@ -4,7 +4,7 @@ The repository contains both real hosted captures and illustrative wireframes. D
 
 ## Real Captures
 
-These screenshots were captured with Playwright from `https://prism.midhunpm.in` on August 21, 2026 using an approved demo teacher session. They contain no passwords, session cookies, CSRF tokens, OAuth tokens, or API keys, but they may show assessment data visible to that account.
+These screenshots were captured with Playwright from `https://prism.midhunpm.in` on August 21, 2026 using an approved demo teacher session. They contain no passwords, session cookies, CSRF tokens, OAuth tokens, or API keys, but they may show assessment data visible to that account. Treat the images as demo evidence, not as a guarantee that hosted data or deployment code remains unchanged.
 
 | Screen | File | Evidence |
 | --- | --- | --- |

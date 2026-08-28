@@ -103,7 +103,20 @@ The expected revision in the current application is `0016_production_hardening`.
 Check for stale placeholders and broken relative links whenever docs change:
 
 ```bash
-rg -n 'TODO|Lorem ipsum|\{\{' README.md docs frontend/README.md
+rg -n 'TODO|Lorem ipsum|\{\{' README.md docs frontend/README.md --glob '!docs/reference/testing.md'
 ```
 
 Inspect image paths and render Markdown in a GitHub-compatible viewer. Product screenshots should contain no credentials or browser storage values.
+
+## Minimal Smoke Requests
+
+With the API running locally, verify public health before opening the browser:
+
+```bash
+curl --fail http://localhost:8000/api/health
+curl --fail http://localhost:8000/api/health/ready
+```
+
+After signing in through the frontend, use the browser network panel for
+authenticated requests. Do not paste session cookies or CSRF headers into shell
+history or issue reports.
