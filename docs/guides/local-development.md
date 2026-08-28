@@ -1,6 +1,6 @@
 # Local Development
 
-This guide starts the current repository with SQLite and a Next.js development server. Use Python 3.13 and Node.js 22 to match the container images.
+This guide starts the current repository with SQLite and a Next.js development server. Use Python 3.13 and Node.js 22 to match the container images. Run backend commands from `backend/`; relative SQLite and Alembic paths depend on that working directory.
 
 ## Prerequisites
 
@@ -43,6 +43,12 @@ OPENAI_API_KEY=
 
 `OPENAI_API_KEY` may remain empty for authentication and UI work. Live transcription, grading, review, imports, and assistant prose require a key.
 
+Generate a local session secret instead of reusing a production secret:
+
+```bash
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
 ## Migrate And Run
 
 Run migrations before starting the API:
@@ -64,7 +70,7 @@ Open [http://localhost:3000](http://localhost:3000). The frontend calls relative
 
 ## Create A Local Teacher
 
-The bootstrap route is available for the first teacher outside production. Use a local-only request:
+The bootstrap route is available for the first teacher outside production. Use a local-only request from a second terminal while the API is running:
 
 ```bash
 curl -i -X POST http://localhost:8000/api/auth/bootstrap \
@@ -72,7 +78,7 @@ curl -i -X POST http://localhost:8000/api/auth/bootstrap \
   --data '{"name":"Local Teacher","email":"teacher@localhost.invalid","password":"local-teacher-password-123"}'
 ```
 
-Then sign in at `http://localhost:3000/login`. The route permits only one initial teacher in a database. New teacher account creation is disabled in production.
+Then sign in at `http://localhost:3000/login`. The route permits only one initial teacher in a database. New teacher account creation is disabled in production. The endpoint accepts an `X-Bootstrap-Token` header for compatibility, but the current route does not validate it; do not treat that header as protection.
 
 ## Seed Demo Accounts
 
@@ -97,7 +103,7 @@ Seeding is idempotent for those account values. It does not create the synthetic
 Run backend tests:
 
 ```bash
-backend/.venv/bin/python -m pytest backend/tests
+(cd backend && .venv/bin/python -m pytest)
 ```
 
 Run frontend checks:
