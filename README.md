@@ -1,96 +1,97 @@
 # PRISM
 
-PRISM is an evidence-first workspace for AI-assisted review of handwritten
-examinations. It helps a teacher move from a paper scan to a defensible,
-criterion-level assessment without handing final authority to an AI system.
+PRISM turns scanned handwritten exam papers into evidence-linked, teacher-controlled assessments and learning analytics.
 
-```text
-paper or scan
-    -> conservative normalization
-    -> Luna perception and question mapping
-    -> rubric criterion suggestions
-    -> deterministic score validation
-    -> evidence and confidence review
-    -> teacher override or accepted review
-    -> student and class learning signals
-```
+![PRISM evidence review workbench](docs/assets/screenshots/review-workbench.png)
 
-The current implementation is a small Next.js frontend backed by a FastAPI
-service, SQLite for local development, Alembic migrations, and local durable
-media with an optional S3-compatible storage adapter. The product contract
-requires `gpt-5.6-luna` for every runtime AI operation; the latest source still
-contains legacy model selectors for some operations, which is recorded as a
-release-blocking documentation gap in [Known gaps](docs/known-gaps.md).
+## Features
+
+- **Evidence-first grading:** keeps each original page beside its transcription, criterion decision, confidence signal, and quoted evidence.
+- **Teacher authority:** lets teachers override marks or request an AI re-evaluation, then accept or reject the suggestion.
+- **Complete assessment flow:** supports class rosters, rubric-based exams, PDF/image uploads, Google Drive imports, processing, review, and release.
+- **Learning analytics:** calculates student, class, exam, question, criterion, and concept performance deterministically.
+- **Role-separated access:** gives teachers an assessment workspace and students a portal containing only released results.
 
 ## Documentation
 
-The full documentation set is in [`docs/`](docs/README.md):
+| Start here | Purpose |
+| --- | --- |
+| [Documentation index](docs/README.md) | Navigate every guide and reference |
+| [Product overview](docs/guides/product-overview.md) | Product scope, roles, and boundaries |
+| [Teacher guide](docs/guides/teacher-guide.md) | Complete the assessment workflow |
+| [Local development](docs/guides/local-development.md) | Run the API and web app locally |
+| [Architecture](docs/reference/architecture.md) | Understand components, data, and request flow |
+| [API reference](docs/reference/api.md) | Find implemented HTTP endpoints |
+| [Operations](docs/operations.md) | Concise deployment and demo operations |
+| [Deployment runbook](docs/operations/deployment.md) | Configure and operate production |
+| [Known gaps](docs/known-gaps.md) | Track source-versus-contract issues |
 
-- [Product requirements](PRD.md)
-- [MVP specification](MVP.md)
-- [Architecture and data flow](docs/architecture.md)
-- [Teacher and student workflows](docs/workflows.md)
-- [API reference](docs/api.md)
-- [Operations and configuration](docs/operations.md)
-- [Demo runbook](docs/demo-runbook.md)
-- [Screenshot guide](docs/screenshots.md)
-- [Known gaps and release notes](docs/known-gaps.md)
+Planning documents remain available in [PRD.md](PRD.md) and [MVP.md](MVP.md). They describe product intent and may include capabilities that are not implemented. The `docs/` directory describes the current codebase and operational behavior; start with its [reading order](docs/README.md#reading-order).
 
-## Quick start
+## Getting Started
 
-### 1. Start the API
+PRISM uses Python 3.13, Node.js 22, SQLite for local development, and PostgreSQL in production.
+
+```bash
+git clone git@github.com:9MidhunPM/prism.git
+cd prism
+cp .env.example .env
+python3 -m venv backend/.venv
+backend/.venv/bin/pip install -r backend/requirements.txt
+cd backend
+.venv/bin/python -m app.migrate
+cd ..
+```
+
+Run the API from `backend/`:
 
 ```bash
 cd backend
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python -m app.migrate
-.venv/bin/uvicorn app.main:app --reload --port 8000
+.venv/bin/uvicorn app.main:app --reload
 ```
 
-### 2. Start the frontend
-
-In a second terminal:
+Run the web app in a second terminal from `frontend/`:
 
 ```bash
 cd frontend
-npm install
-NEXT_PUBLIC_API_URL=http://localhost:8000/api npm run dev
+npm ci
+npm run dev
 ```
 
-Open `http://localhost:3000/login`. Configure a teacher through the protected
-bootstrap flow or use a deliberately configured local demo account. Do not
-place real credentials in `.env.example`, shell history, screenshots, or
-documentation.
+Open [http://localhost:3000](http://localhost:3000). Create the first local teacher through `POST /api/auth/bootstrap`, or configure demo accounts as described in the [local development guide](docs/guides/local-development.md). Set `OPENAI_API_KEY` before processing live papers.
 
-### 3. Verify the checkout
+## Common Commands
 
 ```bash
-cd backend && .venv/bin/pytest
-cd frontend && npm run build
-```
+(cd backend && .venv/bin/python -m pytest)
 
-The health endpoints are:
+The frontend build currently passes. Biome lint reports existing application-source findings; see [testing](docs/reference/testing.md) and [known gaps](docs/known-gaps.md).
 
-```text
-GET http://localhost:8000/api/health
-GET http://localhost:8000/api/health/ready
-```
+## Tech Stack
 
-## Scope and safety
+- [Next.js](https://nextjs.org/) 16 and React 19 for the teacher and student interfaces
+- [FastAPI](https://fastapi.tiangolo.com/) and SQLAlchemy for the API and domain logic
+- SQLite locally and PostgreSQL in production
+- OpenAI structured outputs for perception, grading, review, import, and grounded teacher assistance
+- Alembic for schema migrations
 
-PRISM is a hackathon MVP. It deliberately keeps the architecture small and
-keeps the teacher in the loop. It does not infer intelligence, personality,
-motivation, honesty, cheating, or mental health. It must preserve visible
-student mistakes and use `[ILLEGIBLE]` or structured uncertainty when the paper
-does not support a confident reading.
-
-## Latest source baseline
-
-The documentation refresh is based on the latest fetched `main` commit at the
-start of this work:
+## Project Layout
 
 ```text
-e2806612fbb05d7d2d50057070d32a9e5bfeae93
-Cascade exam deletion through imported papers
+prism/
+|-- frontend/        Next.js application
+|-- backend/         FastAPI application, migrations, and tests
+|-- docs/            Current product and engineering documentation
+|-- data/            Ignored local database and uploaded media
+|-- PRD.md           Product requirements and long-term intent
+|-- MVP.md           MVP planning record
+`-- AGENTS.md        Repository engineering constraints
 ```
+
+## Security
+
+Never commit `.env`, API keys, access tokens, passwords, or student paper data. Browser authentication uses opaque server-side sessions and CSRF protection. Review [security and privacy](docs/operations/security.md) before exposing an environment publicly.
+
+## License
+
+No software license has been granted yet. Treat the repository as all rights reserved until the owner adds a license file.

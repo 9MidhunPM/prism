@@ -3,7 +3,7 @@
 **Status:** Hackathon MVP, documentation refresh
 **Product:** PRISM — explainable assessment intelligence for handwritten papers
 **Primary user:** Teacher or lecturer
-**Runtime model:** `gpt-5.6-luna` only
+**Runtime model policy:** `gpt-5.6-luna`, `gpt-4o`, and `gpt-4o-mini` as routed by operation
 
 ## 1. Why PRISM exists
 
@@ -86,7 +86,7 @@ the fallback when live inference is unavailable.
 ### 5.1 Authentication
 
 - Login accepts an email and password over the API.
-- Sessions are signed and stored in an HTTP-only cookie.
+- Sessions use random opaque tokens; only token hashes are stored and the session cookie is HTTP-only.
 - Unsafe requests are protected by origin and CSRF checks.
 - Login is rate limited.
 - A temporary password may require a password change before normal work.
@@ -161,14 +161,14 @@ Confidence below the configurable review signal, currently `0.75`, recommends
 teacher attention. It is not a calibrated probability and does not reject a
 mark automatically.
 
-The review sequence is always:
+The intended review sequence is:
 
 ```text
 current evaluation
     -> AI review suggestion
     -> teacher accepts or rejects
     -> optional explicit teacher override
-    -> immutable history remains available
+    -> review and override history remains available while the record is retained
 ```
 
 The teacher may override a criterion with a new mark and reason. The original
@@ -194,7 +194,7 @@ concept statistics. The entire database is never dumped into a prompt.
 
 ## 6. AI operation contract
 
-Each operation owns its input schema, prompt, output schema, and version:
+Each operation owns its input schema, prompt, output schema, and version. Current implemented model routing is documented in [the AI pipeline reference](docs/reference/ai-pipeline.md); the profile and class-analysis version names remain planned constants rather than active AI calls.
 
 | Operation | Version | Responsibility |
 | --- | --- | --- |
@@ -224,9 +224,10 @@ uploaded
         or failed
 ```
 
-The API exposes the current stage and attempt information. A bounded retry can
-be requested for a failed job. The frontend uses the same state to show the
-teacher what is happening instead of implying that a result is ready.
+The API exposes the current stage and attempt information. Retry routes exist for
+eligible failed/rescan states, but processing is an in-process FastAPI background
+task rather than a durable worker. A deployment restart can interrupt active
+work; see [known gaps](docs/known-gaps.md).
 
 ## 8. Acceptance criteria
 
@@ -248,4 +249,4 @@ create class
 
 At minimum, automated verification covers score bounds, deterministic totals,
 override persistence, malformed AI schema rejection, and unsupported upload
-rejection.
+rejection. The frontend currently has no automated browser suite.

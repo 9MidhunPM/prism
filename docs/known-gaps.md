@@ -1,39 +1,49 @@
-# Known gaps and release notes
+# Known Gaps
 
-This page keeps the documentation honest about the difference between the
-product contract and the latest fetched implementation.
+This page records implementation gaps that documentation must not hide. These are not claims that the product is unusable; they identify where operational or product expectations exceed the current source.
 
-## Luna-only runtime is not yet enforced everywhere
+## Processing Is Not Durable
 
-The project contract requires `gpt-5.6-luna` for every runtime AI operation.
-The latest source baseline still contains legacy model settings and dispatch in
-`backend/app/ai.py`:
+Submission processing runs in FastAPI `BackgroundTasks`. `ProcessingJob` stores state, but there is no external queue, worker, stale-job recovery loop, or enforced attempt limit. API restarts can interrupt live processing, and multiple backend replicas can schedule conflicting work.
 
-- perception and grading resolve `settings.luna_model`;
-- review and exam import resolve `settings.gpt4o_model`;
-- teacher chat and analysis paths can resolve `settings.gpt4o_mini_model`.
+## Configured Controls Not Fully Wired
 
-This is a release-blocking implementation gap. The documentation describes the
-desired contract, but the running application must not be advertised as
-Luna-only until the dispatch function and configuration are corrected and
-covered by a test that asserts every operation's selected model.
+The following settings exist but are not fully active in runtime behavior:
 
-## UI screenshots need a live capture pass
+- `AI_CONCURRENCY` is unused; perception and grading are sequential.
+- `JOB_POLL_INTERVAL_SECONDS`, `JOB_MAX_ATTEMPTS`, and `JOB_STALE_AFTER_SECONDS` do not create durable worker behavior.
+- `LOG_LEVEL` is not connected to a structured logging setup.
+- S3 settings have no storage adapter behind them.
+- Cache identity does not include model name.
 
-The current documentation includes two neutral SVG wireframes because a
-browser automation surface was unavailable during this pass. They are not
-runtime evidence. Before a public demo or submission, capture the teacher
-dashboard, rubric, paper review, override history, profile, analytics, and
-assistant from a seeded local/staging environment and label each image with its
-source commit.
+## Review And Frontend Mutation Risk
 
-## Documentation freshness
+Some evidence-review mutation handlers use raw `fetch` and do not consistently surface non-2xx failures. The backend requires CSRF for unsafe authenticated requests. Inspect the network response and reload persisted state after review actions.
 
-The refresh is based on commit `e2806612fbb05d7d2d50057070d32a9e5bfeae93`.
-After implementation changes, recheck:
+## Rescan State Inconsistency
 
-1. route names and API endpoints;
-2. AI operation versions and selected models;
-3. processing states and retry behavior;
-4. deletion and media retention semantics;
-5. screenshot captions and seeded data.
+Unreadable-page processing can record page-level `rescan_required` while storing submission-level `review_required`. Retry and replacement routes do not accept every resulting combination. Treat unreadable-paper recovery as an operational issue until the transitions are aligned.
+
+## Analytics Scope Differences
+
+Teacher profile, student profile, dashboard, class analytics, and exam analytics do not all use identical status, archive, primary-class, and secondary-membership filters. Interpret aggregates using the endpoint-specific implementation and source-paper population.
+
+## Evaluation Row Omissions
+
+Questions without mapped answer fragments currently do not create criterion evaluation rows. Their score contribution is effectively zero, but evaluation-based analytics may undercount omissions.
+
+## Reprocessing History
+
+Reprocessing clears derived evaluations, evidence, review suggestions, overrides, and AI artifacts for the submission. Existing teacher decisions are not preserved as an immutable reprocessing history.
+
+## Frontend Test Coverage
+
+The frontend has no committed unit, integration, accessibility, or end-to-end test suite. `npm run build` passes; Biome lint reports existing source findings.
+
+## Account Provisioning
+
+Teacher creation is disabled in production. `BOOTSTRAP_TOKEN` and `ENABLE_HTTP_BOOTSTRAP` are validated as settings, but the current bootstrap route does not compare the supplied token. Use an approved administrative provisioning process.
+
+## Documentation Freshness
+
+When source changes, recheck routes, model routing, prompt versions, processing states, deletion/media retention, analytics scopes, screenshots, and deployment assumptions. Record the observed commit and date for hosted behavior.

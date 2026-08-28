@@ -1,60 +1,84 @@
-# PRISM documentation
+# PRISM Documentation
 
-PRISM is an evidence-first assessment workspace for teachers who still receive
-handwritten examination papers. This documentation describes the current
-hackathon implementation at the latest fetched commit, `e280661`.
+This documentation describes the current implementation at the checked-out commit. Product planning and historical intent live in `PRD.md` and `MVP.md`; known source-versus-contract mismatches are listed in [Known gaps](known-gaps.md).
 
-## Start here
+## Reading Order
+
+1. Start with [Product overview](guides/product-overview.md) if you are learning PRISM.
+2. Follow the [Teacher guide](guides/teacher-guide.md) to use the application.
+3. Use [Local development](guides/local-development.md) to run it.
+4. Read [Architecture](reference/architecture.md) and [API reference](reference/api.md) before changing code.
+5. Read [Deployment](operations/deployment.md), [Security](operations/security.md), and [Backups](operations/backups-and-recovery.md) before operating a public environment.
+
+## Start Here
 
 | Need | Read |
 | --- | --- |
-| Understand the product and its boundaries | [Product requirements](../PRD.md) |
+| Understand the product and boundaries | [Product overview](guides/product-overview.md) |
 | Understand the smallest complete demo | [MVP specification](../MVP.md) |
-| Install and configure the application | [Operations guide](operations.md) |
-| Understand the code and data flow | [Architecture](architecture.md) |
-| Follow a teacher through the product | [Workflows](workflows.md) |
-| Integrate with the API | [API reference](api.md) |
+| Install and configure the application | [Local development](guides/local-development.md) |
+| Understand code and data flow | [Architecture](reference/architecture.md) |
+| Follow a teacher through the product | [Teacher guide](guides/teacher-guide.md) |
+| Follow the student portal | [Student guide](guides/student-guide.md) |
+| Integrate with the API | [API reference](reference/api.md) |
 | Prepare a reliable presentation | [Demo runbook](demo-runbook.md) |
-| Capture or refresh UI evidence | [Screenshot guide](screenshots.md) |
-| Check source-vs-contract mismatches | [Known gaps](known-gaps.md) |
+| Operate a deployment | [Operations](operations.md) and [deployment runbook](operations/deployment.md) |
+| Check source-versus-contract mismatches | [Known gaps](known-gaps.md) |
 
-## Documentation contract
+## Product Guides
 
-- Examples use placeholder credentials such as `teacher@example.com`. Never
-  copy a real password into this repository.
-- Claims about the runtime are based on the checked-out source. If a deployed
-  environment differs, record the deployment URL, commit SHA, and date next to
-  the observation.
-- AI output is treated as a suggestion. A teacher owns the final mark.
-- Numeric totals, percentages, mastery values, and review rates are calculated
-  by application code, not accepted from model prose.
-- Source paper images are evidence. A transcription is an aid and may be
-  uncertain or incomplete.
+- [Product overview](guides/product-overview.md): capabilities, roles, and core concepts
+- [Teacher guide](guides/teacher-guide.md): classes, exams, imports, review, release, and analytics
+- [Student guide](guides/student-guide.md): first sign-in, released results, and learning profile
+- [Local development](guides/local-development.md): prerequisites, setup, demo accounts, and commands
+- [Google Drive import](guides/google-drive-import.md): Cloud setup, folder structure, preview, and commit behavior
+- [Workflows](workflows.md): concise end-to-end teacher and student flow
 
-## Current surface map
+## Engineering Reference
 
-The teacher-facing frontend currently exposes:
+- [Architecture](reference/architecture.md): system boundaries, request flow, and deployment topology
+- [Domain model](reference/domain-model.md): persisted entities and relationships
+- [API reference](reference/api.md): implemented routes, authorization, and common behavior
+- [AI pipeline](reference/ai-pipeline.md): operations, models, prompts, schemas, evidence, and scoring
+- [Configuration](reference/configuration.md): environment variables and implementation status
+- [Processing states](reference/processing-states.md): lifecycle and review signals
+- [Testing](reference/testing.md): automated coverage and verification commands
 
-| Route | Purpose |
-| --- | --- |
-| `/login` | Teacher or student sign-in |
-| `/` | Teacher assessment-review dashboard |
-| `/exams` | Exam list and archive controls |
-| `/exams/new` | Create an exam and rubric |
-| `/exams/:id` | Upload papers, inspect processing, manage roster |
-| `/exams/:id/insights` | Exam-level analytics |
-| `/submissions` | Search papers and processing states |
-| `/submissions/:id` | Evidence-first paper review |
-| `/classes` | Teacher class and roster management |
-| `/classes/:id` | Class detail and membership |
-| `/students/:id` | Student profile and evidence-backed trends |
-| `/assistant` | Grounded teacher questions |
+## Operations
 
-The student-facing surface is intentionally smaller: `/student` exposes only
-released results and `/student/profile` exposes the student's own learning
-profile.
+- [Operations overview](operations.md): compact operations and configuration reference
+- [Deployment](operations/deployment.md): container topology, migrations, health checks, and rollout
+- [Security and privacy](operations/security.md): authentication, CSRF, secrets, and educational-data constraints
+- [Backups and recovery](operations/backups-and-recovery.md): databases, media, restore checks, and job recovery
+- [Troubleshooting](operations/troubleshooting.md): common local and production failures
 
-## The product sentence
+## Source Of Truth
 
-> Physical assessment evidence becomes explainable, teacher-controlled grading
-> and useful learning intelligence.
+When documents disagree, use this order:
+
+1. Executable source and tests
+2. [Known gaps](known-gaps.md)
+3. Canonical guides and references in this directory
+4. Product planning in `PRD.md` and `MVP.md`
+
+Documentation changes should identify whether a statement is implemented, observed in a deployment, or planned.
+
+## Demo And Visual Evidence
+
+- [Demo runbook](demo-runbook.md): reliable presentation flow and fallback plan
+- [Screenshot guide](screenshots.md): how to capture sanitized product evidence
+- [Captured screenshots](assets/screenshots/): hosted product screens captured with Playwright
+- [Wireframes](screenshots/): illustrative future/demo visuals, not claims about rendered UI
+
+Captured screenshots were taken from the hosted application with Playwright on August 21, 2026. They contain assessment data visible to the supplied demo teacher account, but no passwords, session cookies, CSRF tokens, OAuth tokens, or API keys.
+
+## Documentation Contract
+
+- Describe current code as fact; label proposed work explicitly.
+- Never place production credentials or private student data in documentation.
+- Examples use placeholders such as `teacher@example.com`; never copy real credentials into this repository.
+- If a deployed environment differs from source, record URL, commit SHA, and observation date.
+- AI output is a suggestion; a teacher owns the final mark.
+- Numeric totals, percentages, mastery values, and review rates are calculated by application code.
+- Source paper images are evidence; transcription is an aid and may be uncertain.
+- Recheck commands, endpoint names, prompt versions, environment variables, and screenshots when behavior changes.
