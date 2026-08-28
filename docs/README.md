@@ -2,6 +2,14 @@
 
 This documentation describes the current implementation at the checked-out commit. Product planning and historical intent live in `PRD.md` and `MVP.md`; known source-versus-contract mismatches are listed in [Known gaps](known-gaps.md).
 
+## Reading Order
+
+1. Start with [Product overview](guides/product-overview.md) if you are learning PRISM.
+2. Follow the [Teacher guide](guides/teacher-guide.md) to use the application.
+3. Use [Local development](guides/local-development.md) to run it.
+4. Read [Architecture](reference/architecture.md) and [API reference](reference/api.md) before changing code.
+5. Read [Deployment](operations/deployment.md), [Security](operations/security.md), and [Backups](operations/backups-and-recovery.md) before operating a public environment.
+
 ## Start Here
 
 | Need | Read |
@@ -43,6 +51,17 @@ This documentation describes the current implementation at the checked-out commi
 - [Security and privacy](operations/security.md): authentication, CSRF, secrets, and educational-data constraints
 - [Backups and recovery](operations/backups-and-recovery.md): databases, media, restore checks, and job recovery
 - [Troubleshooting](operations/troubleshooting.md): common local and production failures
+
+## Source Of Truth
+
+When documents disagree, use this order:
+
+1. Executable source and tests
+2. [Known gaps](known-gaps.md)
+3. Canonical guides and references in this directory
+4. Product planning in `PRD.md` and `MVP.md`
+
+Documentation changes should identify whether a statement is implemented, observed in a deployment, or planned.
 
 ## Demo And Visual Evidence
 

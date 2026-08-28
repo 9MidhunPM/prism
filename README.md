@@ -26,7 +26,7 @@ PRISM turns scanned handwritten exam papers into evidence-linked, teacher-contro
 | [Deployment runbook](docs/operations/deployment.md) | Configure and operate production |
 | [Known gaps](docs/known-gaps.md) | Track source-versus-contract issues |
 
-Planning documents remain available in [PRD.md](PRD.md) and [MVP.md](MVP.md). They describe product intent and may include capabilities that are not implemented. The `docs/` directory describes the current codebase and operational behavior.
+Planning documents remain available in [PRD.md](PRD.md) and [MVP.md](MVP.md). They describe product intent and may include capabilities that are not implemented. The `docs/` directory describes the current codebase and operational behavior; start with its [reading order](docs/README.md#reading-order).
 
 ## Getting Started
 
