@@ -68,6 +68,10 @@ Use `frontend/lib/api.ts` for browser mutations. Raw `fetch` calls must implemen
 3. Compare `alembic current` with application expected revision.
 4. Verify the deployment did not start mixed backend versions against one database.
 
+`/api/health` can still succeed while `/api/health/ready` fails. Use liveness to
+decide whether the process responds and readiness to decide whether it should
+receive application traffic.
+
 ## Upload Rejected
 
 - Use JPEG, PNG, or PDF.
@@ -81,6 +85,10 @@ Use `frontend/lib/api.ts` for browser mutations. Raw `fetch` calls must implemen
 Processing is an in-process background task. Check whether the API restarted and inspect `/api/processing-jobs` plus the submission status endpoint.
 
 Do not deploy/restart during active assessment when avoidable. Stale jobs are not automatically recovered, and configured job attempt/staleness values are not enforced.
+
+Record the submission ID, current status, last update time, and deployment
+version before taking administrative action. This prevents a retry from hiding
+which stage was interrupted.
 
 ## Processing Failed
 

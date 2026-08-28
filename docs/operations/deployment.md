@@ -16,6 +16,10 @@ Public HTTPS
 
 Production configuration rejects SQLite, insecure cookies, localhost/non-HTTPS CORS origins, weak session secrets, and demo mode.
 
+The repository does not define the public host, TLS terminator, container
+registry, PostgreSQL provider, volume provider, or backup schedule. Treat those
+as deployment-owned decisions and record them outside the source tree.
+
 ## Build Images
 
 Backend:
@@ -137,6 +141,10 @@ The frontend can scale independently when all instances share the same backend a
 8. Inspect failed/active processing jobs and application logs.
 
 Avoid restarting the API while papers are processing. If unavoidable, record active submission IDs and follow the recovery procedure.
+
+Do not use a floating image tag for a production rollout. Keep the deployed
+frontend and backend image tags tied to a commit so a documentation or incident
+report can identify the exact source.
 
 ## Reverse Proxy And Headers
 

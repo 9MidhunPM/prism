@@ -35,6 +35,11 @@ Never expose server secrets through `NEXT_PUBLIC_*`. Google browser client IDs, 
 
 Rotate secrets after accidental exposure. Rotating database or OpenAI credentials requires service restart. Rotating session-related policy should include revoking existing `auth_sessions` if compromise is suspected.
 
+For a suspected session compromise, revoke all active sessions in an approved
+administrative procedure, rotate `SESSION_SECRET` if it is exposed, restart the
+backend, and require affected users to sign in again. Do not delete audit or
+assessment records as a substitute for session revocation.
+
 ## Production Requirements
 
 The settings validator enforces:
@@ -140,3 +145,7 @@ See [backups and recovery](backups-and-recovery.md) for operational data copies.
 5. Notify the responsible educational-data owner.
 6. Restore from verified backups only when integrity is compromised.
 7. Record remediation and update tests/runbooks.
+
+If the incident involves a live paper or student identity, limit the incident
+record to the minimum identifiers needed for response and use the organization's
+educational-data notification process.
