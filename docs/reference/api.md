@@ -2,6 +2,11 @@
 
 The FastAPI application exposes JSON and media routes under `/api`. Interactive OpenAPI documentation is available at `/docs` and the schema at `/openapi.json` when those FastAPI defaults are reachable in the deployment.
 
+The browser uses relative `/api` URLs through the Next.js rewrite. Direct API
+clients should target the backend origin and preserve cookies between requests.
+Resource IDs are opaque UUID strings unless an import payload explicitly uses a
+human-readable identifier such as a question number.
+
 ## Authentication
 
 PRISM uses an opaque session cookie and a separate CSRF cookie. Browser clients must send credentials. Unsafe authenticated methods must copy the `prism_csrf` cookie value into `X-CSRF-Token`.
@@ -99,6 +104,11 @@ Production rejects teacher bootstrap regardless of the documented bootstrap conf
 
 Upload accepts multipart form data. Supported files are JPEG, PNG, and PDF, subject to configured byte and page limits.
 
+`GET /api/submissions` accepts `exam_id`, `class_id`, and `student_id` filters.
+The frontend uses those filters when linking from an exam, class, or student
+context. The processing status endpoint is the polling source for an individual
+paper; `/api/processing-jobs` is the teacher-wide active/failed-job view.
+
 ## Review And Overrides
 
 | Method | Path | Purpose |
@@ -142,3 +152,11 @@ Upload accepts multipart form data. Supported files are JPEG, PNG, and PDF, subj
 - `503`: readiness failure or unavailable configured operation
 
 Error bodies generally contain a FastAPI `detail` field. Media routes return binary responses rather than JSON.
+
+## API Scope Notes
+
+- There is no separate `/api/exams/{exam_id}/insights` route; the frontend insights page reads `/api/exams/{exam_id}/analytics`.
+- There is no bearer-token authentication flow. Use the session and CSRF contract above.
+- Student result routes enforce both release state and ownership.
+- A successful review request creates a pending suggestion; it does not apply marks.
+- A successful release request changes student visibility; it does not alter scoring.
